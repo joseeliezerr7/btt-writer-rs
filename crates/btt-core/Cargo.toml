@@ -25,5 +25,9 @@ log.workspace = true
 sha2.workspace = true
 pulldown-cmark.workspace = true
 
+# En Android no hay OpenSSL del sistema: se compila con el crate (libgit2 https).
+[target.'cfg(target_os = "android")'.dependencies]
+openssl-sys = { version = "0.9", features = ["vendored"] }
+
 [dev-dependencies]
 tempfile.workspace = true

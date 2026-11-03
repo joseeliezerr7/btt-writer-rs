@@ -3,4 +3,11 @@ node_modules/
 dist/
 *.log
 .DS_Store
-apps/desktop/src-tauri/gen/
+apps/desktop/src-tauri/gen/schemas/
+apps/desktop/src-tauri/gen/android/**/build/
+apps/desktop/src-tauri/gen/android/.gradle/
+apps/desktop/src-tauri/gen/android/local.properties
+apps/desktop/src-tauri/gen/android/.idea/
+apps/desktop/src-tauri/gen/android/key.properties
+apps/desktop/src-tauri/gen/android/app/src/main/jniLibs/
+apps/desktop/src-tauri/gen/android/app/src/main/assets/
