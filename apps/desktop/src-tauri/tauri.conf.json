@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "desktop",
-  "version": "0.1.0",
-  "identifier": "com.rtx-5060ti.desktop",
+  "productName": "BTT Writer",
+  "version": "3.0.0",
+  "identifier": "org.solucionestechn.bttwriter",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://localhost:1420",
@@ -12,18 +12,26 @@
   "app": {
     "windows": [
       {
-        "title": "desktop",
-        "width": 800,
-        "height": 600
+        "title": "BTT Writer",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 360,
+        "minHeight": 600,
+        "center": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost https: data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src ipc: http://ipc.localhost 'self'"
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "Solucionestechn",
+    "category": "Education",
+    "shortDescription": "BTT Writer: herramienta de traducción bíblica",
+    "longDescription": "Reescritura en Rust de BTT Writer (Bible Translation Tools) con interfaz Tauri para Windows, macOS, Linux, Android e iOS.",
+    "resources": ["resources/index.sqlite", "resources/containers.zip"],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
