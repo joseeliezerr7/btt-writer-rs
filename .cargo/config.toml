@@ -1,0 +1,3 @@
+# Mantiene los artefactos de compilación fuera de OneDrive (evita sincronizar GBs)
+[build]
+target-dir = "C:/Users/RTX 5060TI/.cargo-target/btt-writer-rs"

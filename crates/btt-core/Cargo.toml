@@ -1,0 +1,29 @@
+[package]
+name = "btt-core"
+description = "Núcleo de BTT Writer: proyectos, USFM, recursos, biblioteca y sincronización"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+thiserror.workspace = true
+regex.workspace = true
+chrono.workspace = true
+rusqlite.workspace = true
+zip.workspace = true
+tar.workspace = true
+bzip2.workspace = true
+walkdir.workspace = true
+reqwest.workspace = true
+git2.workspace = true
+uuid.workspace = true
+log.workspace = true
+sha2.workspace = true
+pulldown-cmark.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
