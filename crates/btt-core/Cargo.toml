@@ -19,15 +19,19 @@ tar.workspace = true
 bzip2.workspace = true
 walkdir.workspace = true
 reqwest.workspace = true
-git2.workspace = true
 uuid.workspace = true
 log.workspace = true
 sha2.workspace = true
 pulldown-cmark.workspace = true
 
-# En Android no hay OpenSSL del sistema: se compila con el crate (libgit2 https).
+# git2 con HTTPS (WinHTTP / SecureTransport / OpenSSL del sistema) en escritorio.
+[target.'cfg(not(target_os = "android"))'.dependencies]
+git2 = { version = "0.19", default-features = false, features = ["https"] }
+
+# En Android no hay OpenSSL y compilarlo desde Windows falla: git local sin
+# transporte HTTPS (la sincronización con WACS en móvil queda pendiente).
 [target.'cfg(target_os = "android")'.dependencies]
-openssl-sys = { version = "0.9", features = ["vendored"] }
+git2 = { version = "0.19", default-features = false }
 
 [dev-dependencies]
 tempfile.workspace = true
