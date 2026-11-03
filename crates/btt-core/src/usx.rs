@@ -209,8 +209,8 @@ pub fn parse_chunk(usx: &str) -> SourceChunk {
                 _ => {}
             },
             Tok::Close(name) => match name {
-                "note" => {
-                    if note_depth > 0 {
+                "note"
+                    if note_depth > 0 => {
                         note_depth -= 1;
                         if note_depth == 0 {
                             let n = collapse_ws(&unescape(&note_buf));
@@ -222,12 +222,10 @@ pub fn parse_chunk(usx: &str) -> SourceChunk {
                             }
                         }
                     }
-                }
-                "para" => {
-                    if note_depth == 0 {
+                "para"
+                    if note_depth == 0 => {
                         buf.push('\n');
                     }
-                }
                 _ => {}
             },
         }

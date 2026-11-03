@@ -141,7 +141,7 @@ pub fn parse_book(usfm: &str) -> Result<Book> {
                     if let Some(ch) = current.take() {
                         book.chapters.push(ch);
                     }
-                    let num = rest.trim().split_whitespace().next().unwrap_or("").to_string();
+                    let num = rest.split_whitespace().next().unwrap_or("").to_string();
                     if num.is_empty() {
                         return Err(Error::InvalidUsfm("\\c sin número".into()));
                     }

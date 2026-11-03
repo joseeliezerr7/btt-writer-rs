@@ -401,11 +401,7 @@ impl Library {
             &p.project.chunks_url,
             cat_id,
         )?;
-        let mime = if p.content_mime_type.is_empty() {
-            format!("application/tsrc+{}", p.resource.r#type)
-        } else {
-            format!("application/tsrc+{}", p.resource.r#type)
-        };
+        let mime = format!("application/tsrc+{}", p.resource.r#type);
         self.upsert_resource(
             proj_id,
             &p.resource.slug,
