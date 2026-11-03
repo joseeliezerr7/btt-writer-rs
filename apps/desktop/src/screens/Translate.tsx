@@ -83,11 +83,11 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
         <Button variant="ghost" icon title={t("translate.home")} onClick={() => navigate({ name: "home" })}><Home size={18} /><span>{t("translate.home")}</span></Button>
         {!isHelps && (
           <>
-            <Button icon className={mode === "read" ? "active" : ""} title={t("translate.read")} onClick={() => setMode("read")}><BookOpen size={18} /><span>{t("translate.read").split(" ")[1] ?? "Read"}</span></Button>
-            <Button icon className={mode === "chunk" ? "active" : ""} title={t("translate.chunk")} onClick={() => setMode("chunk")}><LayoutList size={18} /><span>Chunk</span></Button>
+            <Button icon className={mode === "read" ? "active" : ""} title={t("translate.read")} onClick={() => setMode("read")}><BookOpen size={18} /><span>{t("mode.read")}</span></Button>
+            <Button icon className={mode === "chunk" ? "active" : ""} title={t("translate.chunk")} onClick={() => setMode("chunk")}><LayoutList size={18} /><span>{t("mode.chunk")}</span></Button>
           </>
         )}
-        <Button icon className={mode === "review" ? "active" : ""} title={t("translate.review")} onClick={() => setMode("review")}><ListChecks size={18} /><span>{t("translate.review").split(" ")[1] ?? "Review"}</span></Button>
+        <Button icon className={mode === "review" ? "active" : ""} title={t("translate.review")} onClick={() => setMode("review")}><ListChecks size={18} /><span>{t("mode.review")}</span></Button>
         {conflictCount > 0 && <Button icon variant="danger" title={t("home.conflicts")} onClick={() => { setMode("review"); const c = chapters.find((x) => x.chunks.some((k) => k.has_conflict)); if (c) { setChapter(c.id); setFocus(c.chunks.find((k) => k.has_conflict)?.id ?? null); } }}><AlertTriangle size={18} /><span>{conflictCount}</span></Button>}
         <span className="grow" />
         {!isHelps && <Button variant="ghost" icon title={t("translate.search")} onClick={() => setShowSearch((s) => !s)}><Search size={18} /></Button>}
@@ -242,7 +242,9 @@ function ChapterView(props: {
       setSourceChunks([]);
       return;
     }
-    api.getSourceChapter(source.language_slug, projectSlug, source.slug, chapter.id).then(setSourceChunks).catch(() => setSourceChunks([]));
+    api.getSourceChapter(source.language_slug, projectSlug, source.slug, chapter.id)
+      .then((list) => setSourceChunks([...list].sort((a, b) => Number(a.chunk) - Number(b.chunk))))
+      .catch(() => setSourceChunks([]));
   }, [source?.language_slug, source?.slug, chapter.id]);
   useEffect(() => {
     if (!source || !source.downloaded || isTw) return;
@@ -282,9 +284,11 @@ function ChapterView(props: {
     );
   }
 
+  const rank = (id: string) => (id === "title" ? -2 : id === "reference" ? -1 : Number(id) || 0);
+  const orderedChunks = [...chapter.chunks].sort((a, b) => rank(a.id) - rank(b.id) || a.id.localeCompare(b.id));
   return (
     <div className="cards">
-      {chapter.chunks.map((c) => (
+      {orderedChunks.map((c) => (
         <div key={c.id} ref={props.focus === c.id ? focusRef : undefined}>
           <ChunkCard
             detail={detail}
@@ -482,7 +486,7 @@ function ChunkCard(props: {
   const showHelps = props.review && !isTitle && !isHelps && helps && (helps.has_notes || helps.has_words || helps.has_questions);
   const expected = data?.expected_verses ?? [];
   const placeholder = isTitle ? "" : expected.length ? expected.map((v) => `\\v ${v} `).join("") : t("translate.verses_hint");
-  const canEdit = !data?.finished && (editing || !props.review);
+  const canEdit = !data?.finished && (editing || !props.review || isHelps);
 
   return (
     <div className={"chunk-card" + (showHelps ? " with-helps" : "")}>

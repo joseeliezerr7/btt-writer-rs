@@ -15,11 +15,32 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::Path;
 
+/// Acepta `null`, números o cadenas (los package.json reales traen `null`).
+fn lenient<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<String, D::Error> {
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(match v {
+        None | Some(serde_json::Value::Null) => String::new(),
+        Some(serde_json::Value::String(s)) => s,
+        Some(serde_json::Value::Number(n)) => n.to_string(),
+        Some(other) => other.to_string(),
+    })
+}
+
+fn lenient_i64<'de, D: serde::Deserializer<'de>>(d: D) -> std::result::Result<i64, D::Error> {
+    let v = Option::<serde_json::Value>::deserialize(d)?;
+    Ok(match v {
+        Some(serde_json::Value::Number(n)) => n.as_i64().unwrap_or(0),
+        Some(serde_json::Value::String(s)) => s.trim().parse().unwrap_or(0),
+        _ => 0,
+    })
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct RcLanguage {
     pub slug: String,
+    #[serde(default, deserialize_with = "lenient")]
     pub name: String,
-    #[serde(default = "ltr")]
+    #[serde(default = "ltr", deserialize_with = "lenient")]
     pub direction: String,
 }
 fn ltr() -> String {
@@ -29,17 +50,17 @@ fn ltr() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct RcProject {
     pub slug: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub name: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub desc: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub icon: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_i64")]
     pub sort: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub chunks_url: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub category_slug: String,
     #[serde(default)]
     pub categories: Vec<String>,
@@ -47,27 +68,27 @@ pub struct RcProject {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct RcStatus {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub translate_mode: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub checking_level: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub comments: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub pub_date: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub license: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub version: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct RcResource {
     pub slug: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub name: String,
     /// `book`, `help`, `dict`, `man`
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub r#type: String,
     #[serde(default)]
     pub translation_words_assignments_url: Option<String>,
@@ -79,11 +100,11 @@ pub struct RcResource {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct RcPackage {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub package_version: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient_i64")]
     pub modified_at: i64,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub content_mime_type: String,
     pub language: RcLanguage,
     pub project: RcProject,

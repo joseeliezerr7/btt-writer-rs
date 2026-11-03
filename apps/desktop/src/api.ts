@@ -326,7 +326,14 @@ export interface WordIndexEntry {
   title: string;
 }
 
-const call = <T,>(cmd: string, args?: Record<string, unknown>) => invoke<T>(cmd, args);
+/** Dentro de Tauri usa IPC; en un navegador normal usa el backend simulado (solo para probar la interfaz). */
+export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+
+const call = async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
+  if (isTauri) return invoke<T>(cmd, args);
+  const { mockInvoke } = await import("./mock");
+  return mockInvoke<T>(cmd, args);
+};
 
 export const api = {
   appInfo: () => call<AppInfo>("app_info"),

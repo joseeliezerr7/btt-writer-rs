@@ -259,7 +259,8 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
   const groups = useMemo(() => {
     const g: Record<string, ProjectRow[]> = {};
     for (const b of filteredBooks) (g[b.category || "other"] ??= []).push(b);
-    return Object.entries(g).sort(([a], [b]) => ["bible-ot", "bible-nt"].indexOf(a) - ["bible-ot", "bible-nt"].indexOf(b));
+    const order = (c: string) => { const i = ["bible-ot", "bible-nt"].indexOf(c); return i === -1 ? 99 : i; };
+    return Object.entries(g).sort(([a], [b]) => order(a) - order(b));
   }, [filteredBooks, cats]);
 
   return (

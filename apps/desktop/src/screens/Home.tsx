@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { AlertTriangle, Info, MoreVertical, Plus } from "lucide-react";
-import { api, resourceLabel, type ProjectItem, type ProjectRow } from "../api";
+import { api, isTauri, resourceLabel, type ProjectItem, type ProjectRow } from "../api";
 import { useApp } from "../app-context";
 import { formatDate, useT } from "../i18n";
 import { Button, ProgressRing, Spinner, useFeedback } from "../components/ui";
@@ -34,9 +34,10 @@ export default function HomeScreen() {
   useEffect(() => {
     load();
     api.listBooks(lang === "es" ? "es-419" : "en").then(setBooks).catch(() => {});
+    if (!isTauri) return;
     const un = listen<string[]>("backup-done", () => load());
     return () => {
-      un.then((f) => f());
+      un.then((f) => f()).catch(() => {});
     };
   }, [lang]);
   useEffect(() => {

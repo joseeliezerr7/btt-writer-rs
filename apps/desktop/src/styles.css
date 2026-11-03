@@ -165,7 +165,8 @@ p { margin: 0 0 .75rem; }
 .menu hr { border: 0; border-top: 1px solid var(--border); margin: .3rem 0; }
 
 /* Pantalla de traducción */
-.translate { display: grid; grid-template-columns: 64px 1fr; height: 100%; }
+.translate { display: grid; grid-template-columns: 64px 1fr; height: 100%; overflow: hidden; }
+.translate .main { overflow: hidden; min-height: 0; }
 .translate .sidebar { background: var(--surface); border-right: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; gap: .4rem; padding: .6rem .4rem; overflow: auto; }
 .translate .sidebar .btn.icon { width: 46px; height: 46px; flex-direction: column; font-size: .6rem; gap: .1rem; }
 .translate .sidebar .btn.icon.active { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
@@ -229,5 +230,7 @@ mark { background: #ffe58a; color: inherit; border-radius: 2px; }
   .translate .sidebar .btn.icon { width: 44px; height: 44px; }
   .kv { grid-template-columns: 1fr; }
   .project-table th:nth-child(2), .project-table td:nth-child(2) { display: none; }
+  .project-table td .small.muted { display: none; }
+  .project-table td { padding: .5rem .4rem; }
   .content { padding: .7rem; }
 }

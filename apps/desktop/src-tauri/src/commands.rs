@@ -155,7 +155,12 @@ fn total_chunks(st: &AppState, project: &Project) -> usize {
 }
 
 fn list_item(st: &AppState, p: &Project) -> ProjectListItem {
-    let summary = p.summary();
+    let mut summary = p.summary();
+    if summary.project_name.is_empty() {
+        let ui_lang = st.settings.lock().unwrap().ui_language.clone();
+        let lang = if ui_lang == "es" { "es-419" } else { "en" };
+        summary.project_name = st.library.lock().unwrap().project_name(&summary.project_id, lang);
+    }
     let total = total_chunks(st, p);
     let progress = if total == 0 { 0.0 } else { (summary.finished_chunks as f32 / total as f32).min(1.0) };
     let has_conflicts = gitrepo::conflicted_files(&p.root).map(|f| !f.is_empty()).unwrap_or(false);
