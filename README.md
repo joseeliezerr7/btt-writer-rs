@@ -31,7 +31,7 @@ scripts/cargo.cmd       envoltorio de cargo con el entorno de Visual Studio (Win
 ## Comandos
 
 ```bash
-# pruebas del núcleo (55 pruebas)
+# pruebas del núcleo (55 pruebas; las de red se ejecutan con --ignored)
 scripts\cargo.cmd test -p btt-core
 
 # lint
@@ -75,7 +75,7 @@ La primera vez se despliegan el `index.sqlite` y 11 contenedores (en/ru: Marcos,
 
 ## Limitaciones conocidas
 
-- El CDN de fuentes (`cdn.bibletranslationtools.org`) está detrás de una protección anti-bot de Cloudflare; si rechaza la descarga, la app lo indica y permite importar `.tsrc` o `index.sqlite` manualmente.
+- El CDN de fuentes (`cdn.bibletranslationtools.org`) está detrás de una protección anti-bot de Cloudflare que rechaza identificaciones con URL (como `curl`). La app se identifica como `BTT-Writer/3.0` y descarga correctamente (prueba en vivo: `scripts\cargo.cmd test -p btt-core --test live_download -- --ignored`). Si alguna vez rechaza la descarga, la app lo indica y permite importar `.tsrc` o `index.sqlite` manualmente.
 - El envío de comentarios guarda un archivo en `logs/` (el webhook del helpdesk original requiere un token privado).
 - La subida a WACS usa HTTPS con token (no claves SSH).
 - En Android `git2` se compila sin transporte HTTPS (compilar OpenSSL desde Windows falla): el historial git local funciona, pero subir/clonar desde WACS en el móvil queda pendiente (se resuelve compilando el APK desde Linux/macOS o con OpenSSL precompilado para NDK).

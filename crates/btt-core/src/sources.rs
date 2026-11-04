@@ -10,7 +10,7 @@ use serde_json::Value;
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-pub const USER_AGENT: &str = "btt-writer-rs/3.0 (+https://github.com/joseeliezerr7/BTT-Writerv2)";
+pub const USER_AGENT: &str = "BTT-Writer/3.0";
 
 /// Cliente HTTP bloqueante compartido por catálogo, fuentes y WACS.
 pub fn http_client() -> Result<reqwest::blocking::Client> {
