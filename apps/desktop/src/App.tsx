@@ -3,6 +3,7 @@ import { api, type AppInfo, type Profile, type Settings } from "./api";
 import { AppContext, spToPx, type View } from "./app-context";
 import { I18nContext, translate, type Lang } from "./i18n";
 import { FeedbackProvider, Spinner } from "./components/ui";
+import { AutoUpdateCheck } from "./components/updates";
 import ProfileScreen from "./screens/Profile";
 import HomeScreen from "./screens/Home";
 import TranslateScreen from "./screens/Translate";
@@ -113,6 +114,7 @@ export default function App() {
     <I18nContext.Provider value={i18n}>
       <FeedbackProvider labels={{ ok: i18n.t("common.ok"), cancel: i18n.t("common.cancel") }}>
         <AppContext.Provider value={ctx}>
+          {view.name !== "loading" && <AutoUpdateCheck />}
           {view.name === "loading" ? (
             <div className="welcome">
               <div className="card">

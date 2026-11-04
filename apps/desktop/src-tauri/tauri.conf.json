@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "BTT Writer",
-  "version": "3.0.0",
+  "version": "3.0.1",
   "identifier": "org.solucionestechn.bttwriter",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -35,13 +35,28 @@
     "category": "Education",
     "shortDescription": "BTT Writer: herramienta de traducción bíblica",
     "longDescription": "Reescritura en Rust de BTT Writer (Bible Translation Tools) con interfaz Tauri para Windows, macOS, Linux, Android e iOS.",
-    "resources": ["resources/index.sqlite", "resources/containers.zip"],
+    "resources": [
+      "resources/index.sqlite",
+      "resources/containers.zip"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/joseeliezerr7/btt-writer-rs/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDdERTIzRDQzMDk5RjA1NEUKUldST0JaOEpRejNpZlN4aFRoZXVIOS9lZ2F2bWhCQmRucmZicEllQ2JQeUVXM3I5QVVDZWkzL1IK",
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

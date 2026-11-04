@@ -1,12 +1,13 @@
 // Ajustes: general, servidor, avanzado, legal.
 import { useState, type ReactNode } from "react";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { ArrowLeft, FileText, FolderOpen, HeartHandshake, ScrollText } from "lucide-react";
+import { ArrowLeft, FileText, FolderOpen, HeartHandshake, RefreshCw, ScrollText } from "lucide-react";
 import { api } from "../api";
 import { FONT_SIZES, useApp } from "../app-context";
 import { useT } from "../i18n";
 import { Button, OptionItem, Switch, Tabs, useFeedback } from "../components/ui";
 import { LegalDialog } from "./Profile";
+import { useUpdateCheck } from "../components/updates";
 
 const FONTS = ["Noto Sans", "Noto Serif", "Segoe UI", "Arial", "Times New Roman", "Charis SIL", "Gentium Plus", "Andika", "Doulos SIL", "Scheherazade New", "Padauk", "Abyssinica SIL", "Noto Nastaliq Urdu"];
 
@@ -37,6 +38,8 @@ function Row({ label, hint, children }: { label: ReactNode; hint?: ReactNode; ch
 export default function SettingsScreen() {
   const { t, lang } = useT();
   const { settings, updateSettings, info, navigate, profile, setProfile } = useApp();
+  const checkUpdates = useUpdateCheck();
+  const [checking, setChecking] = useState(false);
   const fb = useFeedback();
   const [tab, setTab] = useState<"general" | "server" | "advanced" | "legal">("general");
   const [legal, setLegal] = useState<null | "license" | "guidelines" | "faith">(null);
@@ -183,6 +186,9 @@ export default function SettingsScreen() {
               </Group>
               <Group title={t("settings.about")}>
                 <Row label={t("settings.version")}><span className="badge info">{info?.version}</span></Row>
+                <Row label={t("settings.updates")} hint={t("settings.updates_hint")}>
+                  <Button size="sm" busy={checking} onClick={async () => { setChecking(true); try { await checkUpdates(true); } finally { setChecking(false); } }}><RefreshCw size={14} /> {t("settings.check_updates")}</Button>
+                </Row>
                 <Row label={t("settings.about")} hint={`${info?.platform} · ${info?.device}`}><span /></Row>
               </Group>
             </>

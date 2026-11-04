@@ -1,13 +1,16 @@
 # Instaladores de escritorio para macOS, Windows y Linux.
 #
-# Se ejecuta al publicar una etiqueta `v*` (por ejemplo `git tag v3.0.0 && git push --tags`)
-# o a mano desde la pestaña Actions. Crea un borrador de Release en GitHub con:
-#   - macOS: BTT Writer_3.0.0_universal.dmg (Intel + Apple Silicon)
-#   - Windows: BTT Writer_3.0.0_x64-setup.exe y BTT Writer_3.0.0_x64_en-US.msi
+# Se ejecuta al publicar una etiqueta `v*` (por ejemplo `git tag v3.0.1 && git push --tags`)
+# o a mano desde la pestaña Actions. Publica un Release en GitHub con:
+#   - macOS: BTT Writer_<versión>_universal.dmg (Intel + Apple Silicon)
+#   - Windows: BTT Writer_<versión>_x64-setup.exe y BTT Writer_<versión>_x64_en-US.msi
 #   - Linux: .deb, .rpm y .AppImage
+#   - latest.json + firmas: las apps instaladas detectan la versión nueva y se actualizan solas.
+#     Requiere el secreto TAURI_SIGNING_PRIVATE_KEY (clave generada con `tauri signer generate`).
+#     Una etiqueta con guion (v3.1.0-beta.1) se publica como prerelease y no actualiza a nadie.
 #
-# Los paquetes de macOS no van firmados ni notarizados: la primera vez hay que abrir la app con
-# clic derecho → Abrir, o quitar la cuarentena con `xattr -dr com.apple.quarantine "/Applications/BTT Writer.app"`.
+# Los paquetes de macOS llevan firma ad hoc (sin cuenta de Apple): la primera vez macOS avisa y hay que
+# permitirla en Ajustes del Sistema → Privacidad y seguridad → "Abrir de todos modos".
 # Para firmar, añade los secretos APPLE_CERTIFICATE, APPLE_CERTIFICATE_PASSWORD, APPLE_SIGNING_IDENTITY,
 # APPLE_ID, APPLE_PASSWORD y APPLE_TEAM_ID (ver https://v2.tauri.app/distribute/sign/macos/).
 
@@ -67,13 +70,17 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Clave privada del actualizador (secreto del repositorio): firma los paquetes y genera latest.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
           tagName: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
           releaseName: "BTT Writer ${{ github.ref_name }}"
-          releaseBody: "Instaladores generados automáticamente."
-          releaseDraft: true
-          prerelease: false
+          releaseBody: "Instaladores de Windows, macOS y Linux. Las apps instaladas se actualizan solas a esta versión."
+          releaseDraft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          includeUpdaterJson: true
           args: ${{ matrix.args }}
 
       - name: Guardar paquetes como artefactos

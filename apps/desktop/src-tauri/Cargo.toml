@@ -23,3 +23,8 @@ serde.workspace = true
 serde_json.workspace = true
 log.workspace = true
 tokio.workspace = true
+
+# Actualización automática y reinicio: solo escritorio.
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"

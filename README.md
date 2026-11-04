@@ -44,11 +44,16 @@ cd apps/desktop && npm install && npm run tauri dev
 cd apps/desktop && npm run tauri build
 # en Windows, con el entorno de Visual Studio cargado:
 .\scripts\tauri.cmd build     # deja los instaladores en %USERPROFILE%\.cargo-target\btt-writer-rs\release\bundle\{msi,nsis}
-eleaseundle\{msi,nsis}
 
 # macOS/Linux (no se pueden generar desde Windows): el flujo .github/workflows/release.yml
 # compila DMG universal, MSI/NSIS y DEB/RPM/AppImage en GitHub Actions al publicar una etiqueta:
-#   git tag v3.0.0 && git push origin main --tags   (o a mano desde la pestaña Actions)
+#   git tag v3.0.1 && git push origin main --tags   (o a mano desde la pestaña Actions)
+
+# Publicar una versión nueva (las apps instaladas se actualizan solas):
+#   1. sube "version" en apps/desktop/src-tauri/tauri.conf.json, apps/desktop/package.json y Cargo.toml
+#   2. git commit -am "v3.0.2" && git tag v3.0.2 && git push origin main --tags
+#   GitHub Actions publica el Release con los instaladores y latest.json firmado con la clave del
+#   actualizador (secreto TAURI_SIGNING_PRIVATE_KEY; la clave local vive en %USERPROFILE%\.tauri\btt-writer.key).
 
 # Android (una vez: npm run tauri android init)
 cd apps/desktop && npm run tauri android dev
