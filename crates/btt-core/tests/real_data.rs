@@ -203,3 +203,20 @@ fn prints_real_pech_acts_with_notes_and_words() {
         eprintln!("escrito {out} ({} KB)", html.len() / 1024);
     }
 }
+
+/// El catálogo real tiene fechas de publicación guardadas como entero en algunos recursos:
+/// la lista completa de recursos debe leerse sin error de tipos.
+#[test]
+fn real_catalog_lists_all_resources() {
+    let root = home().join("BTT-Writer-3");
+    let idx = root.join("database/index.sqlite");
+    if !idx.is_file() {
+        eprintln!("omitida: no existe {}", idx.display());
+        return;
+    }
+    let lib = Library::open(&idx, &root.join("resource_containers")).unwrap();
+    let rows = lib.resources("").unwrap();
+    assert!(rows.len() > 1000, "solo {} recursos", rows.len());
+    let es: Vec<_> = rows.iter().filter(|r| r.language_slug == "es-419" && r.r#type == "book" && r.slug == "ulb").collect();
+    assert!(es.len() >= 60, "libros es-419 ulb: {}", es.len());
+}

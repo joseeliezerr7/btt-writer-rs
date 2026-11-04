@@ -279,7 +279,7 @@ impl Library {
     pub fn resources(&self, project_slug: &str) -> Result<Vec<ResourceRow>> {
         let mut stmt = self.conn.prepare(
             "SELECT sl.slug, sl.name, sl.direction, p.slug, p.name, r.slug, r.name, r.type,
-                    r.translate_mode, r.checking_level, r.version, COALESCE(r.pub_date, ''),
+                    r.translate_mode, CAST(r.checking_level AS TEXT), CAST(r.version AS TEXT), CAST(COALESCE(r.pub_date, '') AS TEXT),
                     COALESCE(f.mime_type, ''), COALESCE(f.url, ''), COALESCE(f.modified_at, 0)
                FROM resource r
                JOIN project p ON p.id = r.project_id
