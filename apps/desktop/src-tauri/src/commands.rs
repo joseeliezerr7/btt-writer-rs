@@ -699,16 +699,39 @@ pub struct HistoryEntry {
 fn chunk_history(st: State<AppState>, id: String, chapter: String, chunk: String) -> R<Vec<HistoryEntry>> {
     let p = open_project(&st, &id)?;
     gitrepo::commit_all(&p.root, &st.author(), gitrepo::AUTOSAVE_MESSAGE).map_err(err)?;
+    history_entries(&p, &chapter, &chunk)
+}
+
+/// Versiones distintas de un chunk, la más reciente primero (ver `chunk_history`).
+fn history_entries(p: &Project, chapter: &str, chunk: &str) -> R<Vec<HistoryEntry>> {
     let file = format!("{chapter}/{chunk}.txt");
     let norm = |s: &str| s.replace("\r\n", "\n").trim().to_string();
-    let current = norm(&p.read_chunk(&chapter, &chunk).unwrap_or_default());
-    let mut out = vec![];
+    let current = norm(&p.read_chunk(chapter, chunk).unwrap_or_default());
+    // Cada texto distinto aparece una sola vez, con la fecha y el autor de cuando se escribió
+    // por primera vez: restaurar no añade versiones, solo cambia cuál es la actual.
+    let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut out: Vec<HistoryEntry> = vec![];
     for c in gitrepo::file_history(&p.root, &file).map_err(err)? {
         let text = gitrepo::file_at(&p.root, &c.id, &file).unwrap_or_default();
-        let plain = btt_core::usfm::to_plain_text(&text).split_whitespace().collect::<Vec<_>>().join(" ");
+        let key = norm(&text);
+        if let Some(&i) = seen.get(&key) {
+            // Aparición más antigua del mismo texto: es su origen real.
+            let e = &mut out[i];
+            if c.time < e.time && !c.message.starts_with("restore ") {
+                e.time = c.time;
+                e.author = c.author;
+                e.message = c.message;
+            }
+            continue;
+        }
+        let body = text.trim_start();
+        let body = body.strip_prefix("\\c ").map(|r| r.trim_start_matches(|ch: char| ch.is_ascii_digit()).trim_start()).unwrap_or(body);
+        let plain = btt_core::usfm::to_plain_text(body).split_whitespace().collect::<Vec<_>>().join(" ");
         let preview: String = plain.chars().take(110).collect();
-        out.push(HistoryEntry { current: norm(&text) == current, id: c.id, time: c.time, message: c.message, author: c.author, preview });
+        seen.insert(key.clone(), out.len());
+        out.push(HistoryEntry { current: key == current, id: c.id, time: c.time, message: c.message, author: c.author, preview });
     }
+    out.sort_by(|a, b| b.time.cmp(&a.time));
     Ok(out)
 }
 
@@ -1613,8 +1636,34 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     /// El cliente HTTP bloqueante no puede crearse dentro del runtime async
     /// (era la causa de que descargar fuentes no hiciera nada); en `spawn_blocking` sí.
+    #[test]
+    /// Con un proyecto real: las versiones repetidas se agrupan y solo una es la actual.
+    #[test]
+    fn historial_agrupa_versiones_repetidas() {
+        let home = std::env::var("USERPROFILE").or_else(|_| std::env::var("HOME")).unwrap_or_default();
+        let dir = std::path::PathBuf::from(home).join("BTT-Writer-3/translations/pay_gal_text_reg");
+        if !dir.join("01/01.txt").is_file() {
+            eprintln!("omitida: no existe {}", dir.display());
+            return;
+        }
+        let p = Project::open(&dir).unwrap();
+        let entries = history_entries(&p, "01", "01").unwrap();
+        let commits = gitrepo::file_history(&p.root, "01/01.txt").unwrap();
+        assert!(!entries.is_empty());
+        assert!(entries.len() <= commits.len());
+        assert_eq!(entries.iter().filter(|e| e.current).count(), 1, "exactamente una versión actual");
+        let mut texts: Vec<String> = entries.iter().map(|e| gitrepo::file_at(&p.root, &e.id, "01/01.txt").unwrap().replace("\r\n", "\n").trim().to_string()).collect();
+        let n = texts.len();
+        texts.sort();
+        texts.dedup();
+        assert_eq!(texts.len(), n, "sin textos repetidos");
+        assert!(entries.windows(2).all(|w| w[0].time >= w[1].time), "más reciente primero");
+    }
+
     #[test]
     fn cliente_bloqueante_fuera_del_runtime() {
         let dentro = std::panic::catch_unwind(|| {

@@ -576,7 +576,7 @@ function ChunkCard(props: {
   };
   /** Texto legible del motivo de una versión ("auto save", "restore abc1234", mensajes de fusión…). */
   const historyLabel = (h: HistoryEntry, all: HistoryEntry[]) => {
-    if (h.message === "auto save") return t("translate.autosave");
+    if (h.message === "auto save" || /GMT|UTC|^\d{4}-\d\d-\d\d/.test(h.message)) return t("translate.autosave");
     const m = /^restore ([0-9a-f]{7})/.exec(h.message);
     if (m) {
       const from = all.find((x) => x.id.startsWith(m[1]));
