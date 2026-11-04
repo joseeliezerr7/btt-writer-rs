@@ -26,6 +26,10 @@
   },
   "bundle": {
     "active": true,
+    "macOS": {
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0"
+    },
     "targets": "all",
     "publisher": "Solucionestechn",
     "category": "Education",
