@@ -11,3 +11,4 @@ apps/desktop/src-tauri/gen/android/.idea/
 apps/desktop/src-tauri/gen/android/key.properties
 apps/desktop/src-tauri/gen/android/app/src/main/jniLibs/
 apps/desktop/src-tauri/gen/android/app/src/main/assets/
+releases/

@@ -42,6 +42,8 @@ cd apps/desktop && npm install && npm run tauri dev
 
 # instaladores (MSI/NSIS en Windows, DMG en macOS, DEB/AppImage en Linux)
 cd apps/desktop && npm run tauri build
+# en Windows, con el entorno de Visual Studio cargado:
+.\scripts	auri.cmd build     # deja los instaladores en %USERPROFILE%\.cargo-targettt-writer-rseleaseundle\{msi,nsis}
 
 # Android (una vez: npm run tauri android init)
 cd apps/desktop && npm run tauri android dev
