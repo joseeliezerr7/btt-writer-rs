@@ -425,6 +425,8 @@ input[type="checkbox"] { accent-color: var(--primary); }
 .read-card h3 { font-family: var(--font-text); font-size: 1.3rem; margin: .2rem 0 .8rem; }
 .conflict-option { border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border)); border-radius: 10px; padding: .7rem .9rem .8rem; background: var(--surface-2); }
 .conflict-option .target-text { white-space: normal; line-height: 1.5; }
+.conflict-option.newest { border-color: color-mix(in srgb, var(--success) 55%, var(--border)); background: color-mix(in srgb, var(--success) 5%, var(--surface)); }
+.conflict-option .origin { display: flex; align-items: center; gap: .3rem; }
 .source-banner { display: flex; align-items: center; gap: .8rem; padding: .6rem 1rem; background: var(--accent-soft); border-bottom: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border)); color: var(--text); flex-wrap: wrap; }
 .source-banner > svg { color: var(--accent); flex: none; }
 .conflict-banner { border-color: color-mix(in srgb, var(--danger) 50%, var(--border)); background: color-mix(in srgb, var(--danger) 5%, var(--surface)); gap: .9rem; }

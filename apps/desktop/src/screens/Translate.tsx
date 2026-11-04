@@ -426,7 +426,7 @@ function ChunkCard(props: {
   focused: boolean;
   onChanged: () => void;
 }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const fb = useFeedback();
   const { detail, chapter, chunk, source } = props;
   const id = detail.item.id;
@@ -582,16 +582,33 @@ function ChunkCard(props: {
           <div className="col">
             <strong className="small row" style={{ color: "var(--danger)" }}><AlertTriangle size={14} /> {t("translate.conflict_title")}</strong>
             <span className="small muted">{t("translate.conflicts_banner_desc")}</span>
-            {data.conflict_options.map((o, i) => (
-              <div key={i} className="conflict-option">
-                <div className="row" style={{ marginBottom: ".45rem" }}>
+            {data.conflict_options.map((o, i) => {
+              const origin = data.conflict_origins?.[i] ?? null;
+              const times = (data.conflict_origins ?? []).map((c) => c?.time ?? 0);
+              const newest = Math.max(...times);
+              const distinct = new Set(times.filter((x) => x > 0)).size > 1;
+              const isNewest = distinct && !!origin && origin.time === newest;
+              const sideLabel = data.conflict_options.length === 2 ? (i === 0 ? t("translate.this_copy") : t("translate.other_copy")) : null;
+              return (
+              <div key={i} className={"conflict-option" + (isNewest ? " newest" : "")}>
+                <div className="row wrap" style={{ marginBottom: ".45rem", rowGap: ".3rem" }}>
                   <span className="badge danger">{t("translate.option", { n: i + 1 })}</span>
+                  {sideLabel && <span className="badge">{sideLabel}</span>}
+                  {distinct && origin && <span className={"badge " + (isNewest ? "ok" : "warn")}>{isNewest ? t("translate.newest") : t("translate.older")}</span>}
                   <span className="grow" />
                   <Button size="sm" variant="primary" onClick={() => resolveConflict(o)}><Check size={14} /> {t("translate.keep")}</Button>
                 </div>
+                <div className="origin small muted" style={{ marginBottom: ".4rem" }}>
+                  {origin ? (
+                    <><History size={13} /> <strong>{origin.author || "—"}</strong> · {formatDate(origin.time, lang, "")}</>
+                  ) : (
+                    <><History size={13} /> {t("translate.unknown_origin")}</>
+                  )}
+                </div>
                 <div className={"target-text" + (props.rtl ? " rtl" : "")} style={{ fontSize: "calc(var(--size-target) * 0.8)" }}><UsfmText text={o} /></div>
               </div>
-            ))}
+              );
+            })}
           </div>
         ) : isHelps && !isTitle ? (
           <HelpsEditor items={data.helps} type={type} readOnly={!canEdit} onChange={async (items) => { const txt = await api.writeHelps(id, chapter, chunk.id, items).catch((e) => { fb.error(e); return null; }); if (txt !== null) setText(txt); }} />

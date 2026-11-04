@@ -147,7 +147,7 @@ export async function mockInvoke<T>(cmd: string, a: Record<string, unknown> = {}
       const text = s("chapter") === "front" ? p.title : p.chunks[key] ?? "";
       const expected = p.type === "text" && s("chunk") !== "title" ? expectedVerses(s("chapter"), s("chunk")) : [];
       const has_conflict = text.includes("<<<<<<< ");
-      const data: ChunkData = { text, finished: p.finished.includes(`${s("chapter")}-${s("chunk")}`), expected_verses: expected, issues: p.type === "text" ? validate(text, expected) : [], has_conflict, conflict_options: has_conflict ? [text.split("=======")[0].split("\n").slice(1).join("\n").trim(), text.split("=======")[1].split(">>>>>>>")[0].trim()] : [], helps: p.type !== "text" && text ? (JSON.parse(text) as HelpItem[]) : [] };
+      const data: ChunkData = { text, finished: p.finished.includes(`${s("chapter")}-${s("chunk")}`), expected_verses: expected, issues: p.type === "text" ? validate(text, expected) : [], has_conflict, conflict_options: has_conflict ? [text.split("=======")[0].split("\n").slice(1).join("\n").trim(), text.split("=======")[1].split(">>>>>>>")[0].trim()] : [], conflict_origins: has_conflict ? [{ id: "a1", time: Math.floor(Date.now() / 1000) - 3600, message: "autosave", author: profile.full_name || "Jose" }, { id: "b2", time: Math.floor(Date.now() / 1000) - 86400 * 40, message: "autosave", author: "Juan_HRomeroC" }] : [], helps: p.type !== "text" && text ? (JSON.parse(text) as HelpItem[]) : [] };
       return delay(data) as T;
     }
     case "write_chunk": { const p = find(s("id")); if (s("chapter") === "front") p.title = s("text"); else p.chunks[`${s("chapter")}/${s("chunk")}`] = s("text"); return delay(undefined) as T; }

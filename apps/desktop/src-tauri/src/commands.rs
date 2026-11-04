@@ -525,6 +525,8 @@ pub struct ChunkData {
     issues: Vec<Issue>,
     has_conflict: bool,
     conflict_options: Vec<String>,
+    /// Commit de origen (autor, fecha) de cada versión, o `None` si no consta.
+    conflict_origins: Vec<Option<gitrepo::Commit>>,
     helps: Vec<HelpItem>,
 }
 
@@ -568,9 +570,17 @@ fn read_chunk(st: State<AppState>, id: String, chapter: String, chunk: String) -
     }
     let has_conflict = btt_core::conflicts::has_conflicts(&text);
     let is_help = p.manifest.type_.id != "text";
+    let conflict_options = if has_conflict { btt_core::conflicts::parse(&text) } else { vec![] };
+    // Autor y fecha de cada versión según el historial git del chunk.
+    let conflict_origins = if has_conflict {
+        gitrepo::version_origins(&p.root, &format!("{chapter}/{chunk}.txt"), &conflict_options).unwrap_or_else(|_| vec![None; conflict_options.len()])
+    } else {
+        vec![]
+    };
     Ok(ChunkData {
         issues: if is_help { vec![] } else { validation::validate_chunk(&text, &expected) },
-        conflict_options: if has_conflict { btt_core::conflicts::parse(&text) } else { vec![] },
+        conflict_options,
+        conflict_origins,
         helps: if is_help && !has_conflict { validation::parse_helps(&text) } else { vec![] },
         finished: p.manifest.is_chunk_finished(&chapter, &chunk),
         expected_verses: expected,

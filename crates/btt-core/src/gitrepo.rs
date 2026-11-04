@@ -45,6 +45,9 @@ pub struct Commit {
     pub id: String,
     pub time: i64,
     pub message: String,
+    /// Nombre del autor (en BTT Writer, el traductor del perfil).
+    #[serde(default)]
+    pub author: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -152,7 +155,39 @@ pub fn file_history(path: &Path, file: &str) -> Result<Vec<Commit>> {
                 id: commit.id().to_string(),
                 time: commit.time().seconds(),
                 message: commit.summary().unwrap_or("").to_string(),
+                author: commit.author().name().unwrap_or("").to_string(),
             });
+        }
+    }
+    Ok(out)
+}
+
+/// Para cada versión de un conflicto, el commit más reciente en el que el archivo
+/// tenía exactamente ese contenido (autor y fecha de esa versión). `None` si no
+/// aparece en el historial (p. ej. texto nunca guardado por separado).
+pub fn version_origins(path: &Path, file: &str, versions: &[String]) -> Result<Vec<Option<Commit>>> {
+    let norm = |s: &str| s.replace("\r\n", "\n").trim().to_string();
+    let wanted: Vec<String> = versions.iter().map(|v| norm(v)).collect();
+    let mut out: Vec<Option<Commit>> = vec![None; versions.len()];
+    let history = file_history(path, file)?;
+    let repo = Repository::open(path)?;
+    for c in history {
+        if out.iter().all(|o| o.is_some()) {
+            break;
+        }
+        let Ok(oid) = Oid::from_str(&c.id) else { continue };
+        let Ok(commit) = repo.find_commit(oid) else { continue };
+        let Ok(tree) = commit.tree() else { continue };
+        let Ok(entry) = tree.get_path(Path::new(file)) else { continue };
+        let Ok(blob) = repo.find_blob(entry.id()) else { continue };
+        let content = norm(&String::from_utf8_lossy(blob.content()));
+        if crate::conflicts::has_conflicts(&content) {
+            continue;
+        }
+        for (i, w) in wanted.iter().enumerate() {
+            if out[i].is_none() && *w == content {
+                out[i] = Some(c.clone());
+            }
         }
     }
     Ok(out)

@@ -148,6 +148,13 @@ export interface HelpItem {
   body: string;
 }
 
+export interface CommitInfo {
+  id: string;
+  time: number;
+  message: string;
+  author: string;
+}
+
 export interface ChunkData {
   text: string;
   finished: boolean;
@@ -155,6 +162,8 @@ export interface ChunkData {
   issues: Issue[];
   has_conflict: boolean;
   conflict_options: string[];
+  /** Commit de origen de cada versión del conflicto (autor y fecha), o null. */
+  conflict_origins: (CommitInfo | null)[];
   helps: HelpItem[];
 }
 
