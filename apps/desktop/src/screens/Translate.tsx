@@ -15,7 +15,7 @@ import {
 } from "../api";
 import { useApp } from "../app-context";
 import { formatDate, useT } from "../i18n";
-import { Button, Dialog, Logo, SimpleMarkdown, Spinner, Switch, Tabs, useFeedback } from "../components/ui";
+import { Button, Dialog, IconBadge, Logo, SimpleMarkdown, Spinner, Switch, Tabs, useFeedback } from "../components/ui";
 import { bookName, ExportDialog, issueText, PrintDialog, SourceSelectionDialog } from "../components/dialogs";
 
 type Mode = "read" | "chunk" | "review";
@@ -76,6 +76,14 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
   if (!detail) return <div className="screen"><Spinner /></div>;
 
   const conflictCount = chapters.reduce((n, c) => n + c.chunks.filter((k) => k.has_conflict).length, 0);
+  const jumpToConflict = () => {
+    setMode("review");
+    const c = chapters.find((x) => x.chunks.some((k) => k.has_conflict));
+    if (c) {
+      setChapter(c.id);
+      setFocus(c.chunks.find((k) => k.has_conflict)?.id ?? null);
+    }
+  };
 
   return (
     <div className="translate">
@@ -90,7 +98,7 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
           </>
         )}
         <button className={"nav-btn" + (mode === "review" ? " active" : "")} title={t("translate.review")} onClick={() => setMode("review")}><ListChecks size={19} /><span>{t("mode.review")}</span></button>
-        {conflictCount > 0 && <button className="nav-btn danger" title={t("home.conflicts")} onClick={() => { setMode("review"); const c = chapters.find((x) => x.chunks.some((k) => k.has_conflict)); if (c) { setChapter(c.id); setFocus(c.chunks.find((k) => k.has_conflict)?.id ?? null); } }}><AlertTriangle size={19} /><span className="count">{conflictCount}</span></button>}
+        {conflictCount > 0 && <button className="nav-btn danger" title={t("home.conflicts")} onClick={jumpToConflict}><AlertTriangle size={19} /><span className="count">{conflictCount}</span></button>}
         <span className="grow" />
         {!isHelps && <button className={"nav-btn" + (showSearch ? " active" : "")} title={t("translate.search")} onClick={() => setShowSearch((s) => !s)}><Search size={19} /><span>{t("common.search")}</span></button>}
         <button className="nav-btn" title={t("translate.publish")} onClick={() => navigate({ name: "publish", id })}><CheckCheck size={19} /><span>{t("nav.publish")}</span></button>
@@ -109,6 +117,7 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
             </div>
           </div>
           <span className="grow" />
+          {conflictCount > 0 && <Button size="sm" variant="danger" onClick={jumpToConflict}><AlertTriangle size={14} /> {t("translate.conflicts_count", { n: conflictCount })}</Button>}
           <div className="row" style={{ gap: ".4rem" }}>
             {sources.length > 0 && (
               <div className="source-tabs">
@@ -162,7 +171,8 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
             rtl={!!rtl}
             focus={focus}
             onBegin={() => setMode("chunk")}
-            onChanged={() => setRefresh((r) => r + 1)}
+            onChanged={() => { load(); }}
+            onResolve={jumpToConflict}
           />
         ) : null}
       </main>
@@ -243,6 +253,7 @@ function ChapterView(props: {
   focus: string | null;
   onBegin: () => void;
   onChanged: () => void;
+  onResolve: () => void;
 }) {
   const { t } = useT();
   const { detail, chapter, mode, source } = props;
@@ -281,6 +292,16 @@ function ChapterView(props: {
   if (mode === "read" && !isHelps) {
     return (
       <div className="cards">
+        {chapter.chunks.some((k) => k.has_conflict) && (
+          <div className="card pad row conflict-banner">
+            <IconBadge tone="danger"><AlertTriangle size={18} /></IconBadge>
+            <div className="grow">
+              <strong>{t("translate.conflicts_banner")}</strong>
+              <div className="small muted">{t("translate.conflicts_banner_desc")}</div>
+            </div>
+            <Button variant="danger" onClick={props.onResolve}>{t("translate.resolve_conflicts")}</Button>
+          </div>
+        )}
         <div className="chunk-card">
           <div className="read-card">
             <div className="pane-head"><span className="title">{t("translate.source")}</span><span className="grow" /><span className="ref">{source?.language_name} · {source?.name}</span></div>
@@ -545,8 +566,16 @@ function ChunkCard(props: {
         ) : data.has_conflict ? (
           <div className="col">
             <strong className="small row" style={{ color: "var(--danger)" }}><AlertTriangle size={14} /> {t("translate.conflict_title")}</strong>
+            <span className="small muted">{t("translate.conflicts_banner_desc")}</span>
             {data.conflict_options.map((o, i) => (
-              <div key={i} className="conflict-option" onClick={() => resolveConflict(o)} title={t("translate.keep")}>{o}</div>
+              <div key={i} className="conflict-option">
+                <div className="row" style={{ marginBottom: ".45rem" }}>
+                  <span className="badge danger">{t("translate.option", { n: i + 1 })}</span>
+                  <span className="grow" />
+                  <Button size="sm" variant="primary" onClick={() => resolveConflict(o)}><Check size={14} /> {t("translate.keep")}</Button>
+                </div>
+                <div className={"target-text" + (props.rtl ? " rtl" : "")} style={{ fontSize: "calc(var(--size-target) * 0.8)" }}><UsfmText text={o} /></div>
+              </div>
             ))}
           </div>
         ) : isHelps && !isTitle ? (

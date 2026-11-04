@@ -423,8 +423,27 @@ input[type="checkbox"] { accent-color: var(--primary); }
 .help-entry .body p { margin: 0 0 .4rem; }
 .read-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); padding: 1.5rem 1.8rem; box-shadow: var(--shadow-sm); }
 .read-card h3 { font-family: var(--font-text); font-size: 1.3rem; margin: .2rem 0 .8rem; }
-.conflict-option { border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border)); border-radius: 10px; padding: .8rem .9rem; cursor: pointer; white-space: pre-wrap; font-family: var(--font-text); transition: background .12s, border-color .12s; }
-.conflict-option:hover { background: var(--danger-soft); border-color: var(--danger); }
+.conflict-option { border: 1px solid color-mix(in srgb, var(--danger) 45%, var(--border)); border-radius: 10px; padding: .7rem .9rem .8rem; background: var(--surface-2); }
+.conflict-option .target-text { white-space: normal; line-height: 1.5; }
+.conflict-banner { border-color: color-mix(in srgb, var(--danger) 50%, var(--border)); background: color-mix(in srgb, var(--danger) 5%, var(--surface)); gap: .9rem; }
+
+/* Inicio: grupos por idioma */
+.lang-group { margin-bottom: .9rem; }
+.lang-group-head { display: flex; align-items: center; gap: .8rem; width: 100%; padding: .7rem 1rem; border: 0; background: var(--surface-2); color: var(--text); cursor: pointer; text-align: left; border-radius: var(--radius); transition: background .12s; }
+.lang-group.open .lang-group-head { border-radius: var(--radius) var(--radius) 0 0; border-bottom: 1px solid var(--border); }
+.lang-group-head:hover { background: var(--surface-3); }
+.lang-group-head .chev { color: var(--muted); transition: transform .18s var(--ease); flex: none; }
+.lang-group.open .lang-group-head .chev { transform: rotate(90deg); }
+.lang-group-head .lname { font-weight: 650; font-family: var(--font-text); font-size: 1rem; }
+.lang-group-head .lcode { color: var(--muted); font-size: .8rem; margin-left: .4rem; font-family: var(--font-ui); }
+.lang-group-head .lmeta { display: flex; align-items: center; gap: .8rem; margin-left: auto; }
+.lang-group-head .progress-inline { min-width: 140px; }
+.lang-group .project-row { padding-left: 2.2rem; grid-template-columns: 44px minmax(180px, 1.6fr) minmax(120px, 1fr) minmax(170px, 1fr) 40px; }
+.lang-group .project-row .cell-lang { display: none; }
+@media (max-width: 900px) {
+  .lang-group-head .progress-inline { display: none; }
+  .lang-group .project-row { padding-left: .8rem; }
+}
 .search-bar { display: flex; gap: .45rem; padding: .55rem 1rem; background: var(--surface-2); border-bottom: 1px solid var(--border); align-items: center; flex-wrap: wrap; }
 .search-bar .input { min-height: 34px; padding-top: .35rem; padding-bottom: .35rem; }
 mark { background: #ffe58a; color: inherit; border-radius: 2px; }

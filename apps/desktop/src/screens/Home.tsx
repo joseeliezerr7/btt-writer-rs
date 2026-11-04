@@ -1,16 +1,35 @@
-// Inicio: lista de proyectos, ordenación, menú de opciones y diálogos.
+// Inicio: lista de proyectos agrupada por idioma, ordenación, menú de opciones y diálogos.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { AlertTriangle, Archive, BookOpen, CheckCircle2, Download, FolderInput, Info, Layers, LogOut, MessageSquare, MoreVertical, Plus, RefreshCw, Settings as SettingsIcon } from "lucide-react";
+import { AlertTriangle, Archive, BookOpen, CheckCircle2, ChevronRight, Download, FolderClosed, FolderInput, FolderOpen, Info, Layers, LogOut, MessageSquare, MoreVertical, Plus, RefreshCw, Settings as SettingsIcon } from "lucide-react";
 import { api, isTauri, resourceLabel, type ProjectItem, type ProjectRow } from "../api";
 import { useApp } from "../app-context";
 import { formatDate, useT } from "../i18n";
-import { Avatar, Button, EmptyState, Logo, Monogram, Spinner, Stat, useFeedback } from "../components/ui";
+import { Avatar, Button, EmptyState, Logo, Monogram, Spinner, Stat, Switch, useFeedback } from "../components/ui";
 import { BackupsDialog, bookName, FeedbackDialog, ImportDialog, MigrateDialog, NewProjectDialog, ProjectDetailsDialog, UpdateLibraryDialog } from "../components/dialogs";
 
 const BIBLE_ORDER = "gen exo lev num deu jos jdg rut 1sa 2sa 1ki 2ki 1ch 2ch ezr neh est job psa pro ecc sng isa jer lam ezk dan hos jol amo oba jon mic nam hab zep hag zec mal mat mrk luk jhn act rom 1co 2co gal eph php col 1th 2th 1ti 2ti tit phm heb jas 1pe 2pe 1jn 2jn 3jn jud rev".split(" ");
 
 type DialogKind = null | "new" | "import" | "library" | "feedback" | "backups" | "migrate";
+
+const LS_GROUP = "btt.groupByLanguage";
+const LS_COLLAPSED = "btt.collapsedLanguages";
+
+function readLs<T>(key: string, fallback: T): T {
+  try {
+    const v = localStorage.getItem(key);
+    return v === null ? fallback : (JSON.parse(v) as T);
+  } catch {
+    return fallback;
+  }
+}
+function writeLs(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* sin almacenamiento */
+  }
+}
 
 export default function HomeScreen() {
   const { t, lang } = useT();
@@ -21,6 +40,8 @@ export default function HomeScreen() {
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [details, setDetails] = useState<ProjectItem | null>(null);
   const [menu, setMenu] = useState(false);
+  const [grouped, setGrouped] = useState<boolean>(() => readLs(LS_GROUP, true));
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => readLs(LS_COLLAPSED, {}));
   const menuRef = useRef<HTMLDivElement>(null);
 
   const load = async () => {
@@ -59,6 +80,17 @@ export default function HomeScreen() {
     return list;
   }, [projects, settings.sort_by, settings.book_order, books]);
 
+  /** Carpetas por idioma destino, ordenadas por nombre; dentro, el orden elegido. */
+  const groups = useMemo(() => {
+    const map = new Map<string, { id: string; name: string; items: ProjectItem[] }>();
+    for (const p of sorted) {
+      const g = map.get(p.language_id) ?? { id: p.language_id, name: p.language_name, items: [] };
+      g.items.push(p);
+      map.set(p.language_id, g);
+    }
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [sorted]);
+
   const stats = useMemo(() => {
     const all = projects ?? [];
     return {
@@ -66,8 +98,19 @@ export default function HomeScreen() {
       finished: all.filter((p) => p.progress >= 1).length,
       inProgress: all.filter((p) => p.progress > 0 && p.progress < 1).length,
       conflicts: all.filter((p) => p.has_conflicts).length,
+      languages: new Set(all.map((p) => p.language_id)).size,
     };
   }, [projects]);
+
+  const toggleGroup = (id: string) => {
+    const next = { ...collapsed, [id]: !collapsed[id] };
+    setCollapsed(next);
+    writeLs(LS_COLLAPSED, next);
+  };
+  const setGroupedPersist = (v: boolean) => {
+    setGrouped(v);
+    writeLs(LS_GROUP, v);
+  };
 
   const logout = async () => {
     await api.logout();
@@ -82,6 +125,44 @@ export default function HomeScreen() {
 
   const legacyRoots = (info?.legacy_roots ?? []).filter((r) => !settings.migrated_from.includes(r));
   const userName = profile.full_name || profile.session?.user.username || "";
+
+  const row = (p: ProjectItem, i: number) => {
+    const pct = Math.round(p.progress * 100);
+    const idx = BIBLE_ORDER.indexOf(p.project_id);
+    const hueKey = p.type_id !== "text" ? "helps-" + p.type_id : p.resource_id === "obs" ? "obs" : idx >= 0 && idx < 39 ? "ot" : "nt";
+    return (
+      <div key={p.id} className="project-row" onClick={() => openProject(p)} style={{ animationDelay: `${Math.min(i, 12) * 25}ms` }}>
+        <Monogram text={p.project_id} hueKey={hueKey} />
+        <div style={{ minWidth: 0 }}>
+          <div className="name ellipsis">{bookName(p, books)}</div>
+          <div className="meta ellipsis">{p.id} · {formatDate(p.modified_at, lang, "")}</div>
+        </div>
+        <div className="cell-type"><span className="badge">{resourceLabel(p, t)}</span></div>
+        <div className="cell-lang lang ellipsis">{p.language_name}<span className="code">{p.language_id}</span></div>
+        <div className="row" style={{ gap: ".6rem" }}>
+          <div className="progress-inline">
+            <div className="progress-bar thin"><div style={{ width: `${pct}%` }} /></div>
+            <span className="pct" style={{ color: pct >= 100 ? "var(--success)" : undefined }}>{pct}%</span>
+          </div>
+          {p.has_conflicts && <span title={t("home.conflicts")} className="badge danger"><AlertTriangle size={12} /></span>}
+        </div>
+        <div onClick={(e) => e.stopPropagation()}>
+          <Button variant="ghost" icon title={t("home.info")} onClick={() => setDetails(p)}><Info size={18} /></Button>
+        </div>
+      </div>
+    );
+  };
+
+  const listHead = (
+    <div className="project-list-head">
+      <span />
+      <span>{t("home.col.project")}</span>
+      <span>{t("home.col.type")}</span>
+      <span>{t("home.col.language")}</span>
+      <span>{t("home.col.progress")}</span>
+      <span />
+    </div>
+  );
 
   return (
     <div className="screen">
@@ -119,7 +200,7 @@ export default function HomeScreen() {
       <div className="content">
         <div className="container">
           {projects === null ? (
-            <Spinner />
+            <Spinner label={t("app.loading")} />
           ) : projects.length === 0 ? (
             <div className="card elevated" style={{ marginTop: "2rem" }}>
               <EmptyState icon={<BookOpen size={28} />} title={t("home.empty")} description={t("home.empty_desc")}>
@@ -155,46 +236,41 @@ export default function HomeScreen() {
                   <option value="bible">{t("home.book_order")}</option>
                   <option value="alpha">{t("home.alpha_order")}</option>
                 </select>
+                <span className="grow" />
+                <Switch on={grouped} onChange={setGroupedPersist} label={<span className="small">{t("home.group_by_language")}</span>} />
               </div>
 
-              <div className="card">
-                <div className="project-list-head">
-                  <span />
-                  <span>{t("home.col.project")}</span>
-                  <span>{t("home.col.type")}</span>
-                  <span>{t("home.col.language")}</span>
-                  <span>{t("home.col.progress")}</span>
-                  <span />
-                </div>
-                <div className="project-list">
-                  {sorted.map((p, i) => {
-                    const pct = Math.round(p.progress * 100);
-                    const idx = BIBLE_ORDER.indexOf(p.project_id);
-                    const hueKey = p.type_id !== "text" ? "helps-" + p.type_id : p.resource_id === "obs" ? "obs" : idx >= 0 && idx < 39 ? "ot" : "nt";
-                    return (
-                      <div key={p.id} className="project-row" onClick={() => openProject(p)} style={{ animationDelay: `${Math.min(i, 12) * 25}ms` }}>
-                        <Monogram text={p.project_id} hueKey={hueKey} />
-                        <div style={{ minWidth: 0 }}>
-                          <div className="name ellipsis">{bookName(p, books)}</div>
-                          <div className="meta ellipsis">{p.id} · {formatDate(p.modified_at, lang, "")}</div>
-                        </div>
-                        <div className="cell-type"><span className="badge">{resourceLabel(p, t)}</span></div>
-                        <div className="cell-lang lang ellipsis">{p.language_name}<span className="code">{p.language_id}</span></div>
-                        <div className="row" style={{ gap: ".6rem" }}>
-                          <div className="progress-inline">
-                            <div className="progress-bar thin"><div style={{ width: `${pct}%` }} /></div>
+              {grouped ? (
+                groups.map((g) => {
+                  const open = !collapsed[g.id];
+                  const avg = g.items.reduce((s, p) => s + p.progress, 0) / g.items.length;
+                  const pct = Math.round(avg * 100);
+                  const conflicts = g.items.filter((p) => p.has_conflicts).length;
+                  return (
+                    <div key={g.id} className={"card lang-group" + (open ? " open" : "")}>
+                      <button type="button" className="lang-group-head" onClick={() => toggleGroup(g.id)} aria-expanded={open}>
+                        <ChevronRight size={18} className="chev" />
+                        {open ? <FolderOpen size={20} style={{ color: "var(--accent)" }} /> : <FolderClosed size={20} style={{ color: "var(--accent)" }} />}
+                        <span className="ellipsis"><span className="lname">{g.name}</span><span className="lcode">{g.id}</span></span>
+                        <span className="lmeta">
+                          {conflicts > 0 && <span className="badge danger"><AlertTriangle size={12} /> {conflicts}</span>}
+                          <span className="badge">{g.items.length === 1 ? t("home.project_count_one") : t("home.projects_count", { n: g.items.length })}</span>
+                          <span className="progress-inline">
+                            <span className="progress-bar thin" style={{ display: "block" }}><div style={{ width: `${pct}%` }} /></span>
                             <span className="pct" style={{ color: pct >= 100 ? "var(--success)" : undefined }}>{pct}%</span>
-                          </div>
-                          {p.has_conflicts && <span title={t("home.conflicts")} className="badge danger"><AlertTriangle size={12} /></span>}
-                        </div>
-                        <div onClick={(e) => e.stopPropagation()}>
-                          <Button variant="ghost" icon title={t("home.info")} onClick={() => setDetails(p)}><Info size={18} /></Button>
-                        </div>
-                      </div>
-                    );
-                  })}
+                          </span>
+                        </span>
+                      </button>
+                      {open && <div className="project-list">{g.items.map(row)}</div>}
+                    </div>
+                  );
+                })
+              ) : (
+                <div className="card">
+                  {listHead}
+                  <div className="project-list">{sorted.map(row)}</div>
                 </div>
-              </div>
+              )}
             </>
           )}
         </div>

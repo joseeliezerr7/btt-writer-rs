@@ -149,3 +149,30 @@ fn migration_counts_legacy_backups_from_btt_writer_1_6() {
     let n = btt_core::appdata::Paths::legacy_project_count(&old);
     assert!(n >= 90, "se esperaban los respaldos automáticos de la 1.6, hay {n}");
 }
+
+#[test]
+fn parses_real_conflicts_from_migrated_pech_acts() {
+    let dir = home().join("BTT-Writer-3/translations/pay_act_text_reg");
+    if !dir.is_dir() {
+        eprintln!("omitida: no existe {}", dir.display());
+        return;
+    }
+    let p = Project::open(&dir).unwrap();
+    let mut conflicted = 0;
+    for ch in p.chapters().unwrap() {
+        for c in p.chunks(&ch).unwrap() {
+            let text = p.read_chunk(&ch, &c).unwrap();
+            if btt_core::conflicts::has_conflicts(&text) {
+                conflicted += 1;
+                let opts = btt_core::conflicts::parse(&text);
+                assert!(opts.len() >= 2, "{ch}/{c}: {opts:?}");
+                for o in &opts {
+                    assert!(!btt_core::conflicts::has_conflicts(o), "{ch}/{c} opción con marcadores");
+                    assert!(o.contains(r"\v"), "{ch}/{c} opción sin versos: {o}");
+                }
+            }
+        }
+    }
+    eprintln!("chunks con conflicto: {conflicted}");
+    assert!(conflicted > 0);
+}
