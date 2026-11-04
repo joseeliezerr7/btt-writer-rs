@@ -170,15 +170,15 @@ export interface PrintRequest {
   line_height: number;
 }
 
-/** Formato predeterminado: el PDF clásico de los equipos (Arial 12, notas a dos columnas, pie con número de página). */
+/** Formato predeterminado: el PDF clásico de los equipos (Arial 12, notas a dos columnas, pie con número de página) con la portada y la licencia del BTT Writer original. */
 export const DEFAULT_PRINT: PrintRequest = {
   include_incomplete: true,
   include_images: false,
   columns: 1,
   font_size_pt: 12,
   font_family: "Arial",
-  cover: false,
-  license: false,
+  cover: true,
+  license: true,
   toc: false,
   notes: true,
   words: true,

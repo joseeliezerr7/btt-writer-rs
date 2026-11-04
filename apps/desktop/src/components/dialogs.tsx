@@ -556,7 +556,7 @@ export function ExportDialog({ project, onClose, onReview }: { project: ProjectI
 }
 
 const PRINT_FONTS = ["Arial", "Calibri", "Noto Sans", "Andika", "Noto Serif", "Georgia", "Times New Roman", "Cambria", "Charis SIL", "Gentium Plus"];
-const PRINT_OPTS_KEY = "btt.printOptions";
+const PRINT_OPTS_KEY = "btt.printOptions.v2";
 
 /** Opciones guardadas por el usuario sobre el formato predeterminado. */
 function loadPrintOptions(): PrintRequest {

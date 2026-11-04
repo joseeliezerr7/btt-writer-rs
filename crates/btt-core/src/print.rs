@@ -4,7 +4,8 @@
 //! traducción: Arial 12, márgenes de 2,5 cm, título de capítulo en azul a la
 //! izquierda, versículos en superíndice, notas de traducción a dos columnas
 //! después de cada capítulo, glosario de palabras al final y número de página
-//! en el pie. Todo es configurable con [`PrintOptions`].
+//! en el pie; la portada y la licencia son las del BTT Writer original.
+//! Todo es configurable con [`PrintOptions`].
 
 use crate::project::Project;
 use crate::rc::ResourceContainer;
@@ -93,8 +94,8 @@ impl Default for PrintOptions {
             images_base: String::new(),
             columns: 1,
             justify: true,
-            cover: false,
-            license: false,
+            cover: true,
+            license: true,
             toc: false,
             notes: true,
             words: true,
@@ -124,17 +125,15 @@ struct Labels {
     chapter: &'static str,
     page: &'static str,
     of: &'static str,
-    license: &'static str,
     contents: &'static str,
-    notes: &'static str,
     words: &'static str,
 }
 
 fn labels(lang: &str) -> Labels {
     if lang.starts_with("en") {
-        Labels { chapter: "Chapter", page: "Page", of: "of", license: "License", contents: "Contents", notes: "Translation Notes", words: "Translation Words" }
+        Labels { chapter: "Chapter", page: "Page", of: "of", contents: "Contents", words: "Translation Words" }
     } else {
-        Labels { chapter: "Capítulo", page: "Página", of: "de", license: "Licencia", contents: "Contenido", notes: "Notas de traducción", words: "Palabras de traducción" }
+        Labels { chapter: "Capítulo", page: "Página", of: "de", contents: "Contenido", words: "Palabras de traducción" }
     }
 }
 
@@ -584,13 +583,6 @@ pub fn render_document(project: &Project, sources: PrintSources<'_>, opts: &Prin
     }
     let columns_css = if opts.columns >= 2 { "columns: 2; column-gap: 2em; column-rule: 1px solid #ddd;" } else { "" };
     let align = if opts.justify { "justify" } else { "start" };
-    let today = {
-        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
-        let (y, mo, d) = civil_from_unix(secs);
-        format!("{d:02}/{mo:02}/{y}")
-    };
-    let translators = if m.translators.is_empty() { String::new() } else { format!("<p class=\"translators\">{}</p>", esc(&m.translators.join(", "))) };
-    let license = crate::project::LICENSE_MD.lines().filter(|l| !l.trim().is_empty()).map(|l| format!("<p>{}</p>", esc(l.trim_start_matches('#').trim()))).collect::<String>();
     let margin = opts.margin_cm.clamp(1.0, 4.0);
     let line_height = opts.line_height.clamp(1.0, 2.2);
     let page_footer = if opts.page_numbers {
@@ -613,12 +605,23 @@ pub fn render_document(project: &Project, sources: PrintSources<'_>, opts: &Prin
     } else {
         "sup.v { color: inherit; font-weight: 400; }"
     };
+    // Portada como la de BTT Writer: solo el título del libro (y la descripción si existe),
+    // centrado, en negrita, a 2,5× el tamaño del texto y un poco por encima de la mitad de la página.
     let cover = if opts.cover {
-        format!("<section class=\"cover\"><h1>{title}</h1><div class=\"rule\"></div><p class=\"lang\">{lang_name}</p>{translators}<p class=\"meta\">BTT Writer · {today}</p></section>", title = esc(&title), lang_name = esc(&m.target_language.name))
+        let description = project.read_chunk("front", "description").unwrap_or_default();
+        let description = description.trim();
+        let desc_html = if description.is_empty() { String::new() } else { format!("<p class=\"description\">{}</p>", esc(description)) };
+        format!("<section class=\"cover\"><h1>{}</h1>{desc_html}</section>", esc(&title))
     } else {
         String::new()
     };
-    let license_html = if opts.license { format!("<section class=\"license\"><h3>{}</h3>{license}</section>", lb.license) } else { String::new() };
+    // Licencia: el mismo texto y estructura que la página de licencia del BTT Writer original.
+    let license_html = if opts.license {
+        let artwork = if is_obs { ORIGINAL_ARTWORK_ATTRIBUTION } else { "" };
+        format!("<section class=\"license\">{ORIGINAL_LICENSE_HTML}{artwork}</section>")
+    } else {
+        String::new()
+    };
     let toc_html = if opts.toc { format!("<section class=\"toc\"><h3>{}</h3><ol>{toc}</ol></section>", lb.contents) } else { String::new() };
     let words_section = if words_html.is_empty() { String::new() } else { format!("<section class=\"words\"><h2>{}</h2>{words_html}</section>", lb.words) };
     Ok(format!(
@@ -632,15 +635,16 @@ body {{ font-family: {font}; font-size: {size}pt; line-height: {line_height}; co
   .chapter + .chapter, .helps, .words, .license, .toc, .cover + * {{ border-top: 1px dashed #bbb; padding-top: 1.6em; margin-top: 1.6em; }} }}
 h1, h2, h3, h4 {{ font-weight: 700; line-height: 1.2; }}
 a {{ color: inherit; text-decoration: none; }}
-.cover {{ text-align: center; page-break-after: always; display: flex; flex-direction: column; justify-content: center; min-height: 80vh; }}
-.cover .rule {{ width: 4em; height: 3px; background: #2f6fb5; margin: 1.2em auto; }}
-.cover h1 {{ font-size: 2.6em; margin: 0 0 .2em; letter-spacing: -.01em; }}
-.cover .lang {{ font-size: 1.25em; color: #333; margin: 0; }}
-.cover .translators {{ color: #555; margin-top: 2em; font-size: .95em; }}
-.cover .meta {{ color: #888; font-size: .8em; margin-top: 3em; }}
-.license {{ page-break-after: always; font-size: .82em; color: #333; }}
-.license h3, .toc h3 {{ font-size: 1.3em; border-bottom: 2px solid #2f6fb5; padding-bottom: .3em; margin-bottom: .8em; }}
-.license p {{ margin: 0 0 .5em; }}
+.cover {{ text-align: center; page-break-after: always; padding-top: calc(5.5in - 2in - {margin}cm); }}
+.cover h1 {{ font-size: 2.5em; font-weight: 700; margin: 0; line-height: 1.25; }}
+.cover .description {{ font-weight: 700; margin: .8em 0 0; }}
+.license {{ page-break-after: always; }}
+.license h2 {{ font-size: 1.4em; margin: 0 0 .6em; }}
+.license h3 {{ font-size: 1.15em; margin: 1em 0 .3em; }}
+.license h4 {{ font-size: 1em; font-weight: 700; margin: .6em 0; }}
+.license p {{ margin: 0 0 .6em; }}
+.license .bullet {{ margin: .3em 0; }}
+.toc h3 {{ font-size: 1.3em; border-bottom: 2px solid #2f6fb5; padding-bottom: .3em; margin-bottom: .8em; }}
 .toc {{ page-break-after: always; }}
 .toc ol {{ columns: 2; column-gap: 2em; padding-inline-start: 1.5em; }}
 .toc li {{ margin: .15em 0; break-inside: avoid; }}
@@ -699,20 +703,27 @@ img.obs {{ display: block; max-width: 100%; margin: .5em auto; break-inside: avo
     ))
 }
 
-/// Fecha civil (año, mes, día) de un instante UNIX en UTC.
-fn civil_from_unix(secs: i64) -> (i64, u32, u32) {
-    let days = secs.div_euclid(86400);
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z - era * 146_097;
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
-    (if m <= 2 { y + 1 } else { y }, m, d)
-}
+/// Página de licencia del BTT Writer original (texto en inglés, tal como lo imprime la app).
+const ORIGINAL_LICENSE_HTML: &str = r#"<h2>Creative Commons Attribution-ShareAlike 4.0 International</h2>
+<h3>Human-Readable Summary</h3>
+<p>The Creative Commons Attribution-Share Alike 4.0 International License is available at <a href="http://creativecommons.org/licenses/by-sa/4.0/">http://creativecommons.org/licenses/by-sa/4.0/</a></p>
+<h4>This is a human-readable summary of (and not a substitute for) the License</h4>
+<h3>You are free to:</h3>
+<p class="bullet"><b>&#8226; Share</b> - copy and redistribute the material in any medium or format</p>
+<p class="bullet"><b>&#8226; Adapt</b> - remix, transform, and build upon the material for any purpose, even commercially.</p>
+<p>The licensor cannot revoke these freedoms as long as you follow the license terms.</p>
+<h3>Under the following terms:</h3>
+<p class="bullet"><b>&#8226; Attribution</b> - You must give appropriate credit, provide a link to the license, and indicate if changes were made. You may do so in any reasonable manner, but not in any way that suggests the licensor endorses you or your use.</p>
+<p class="bullet"><b>&#8226; ShareAlike</b> - If you remix, transform, or build upon the material, you must distribute your contributions under the same license as the original.</p>
+<p class="bullet"><b>&#8226; No additional restrictions</b> - You may not apply legal terms or technological measures that legally restrict others from doing anything the license permits.</p>
+<h3>Notices:</h3>
+<p class="bullet">&#8226; You do not have to comply with the license for elements of the material in the public domain or where your use is permitted by an applicable exception or limitation.</p>
+<p class="bullet">&#8226; No warranties are given. The license may not give you all of the permissions necessary for your intended use. For example, other rights such as publicity, privacy, or moral rights may limit how you use the material.</p>
+"#;
+
+/// Atribución de las imágenes de OBS, como en el original.
+const ORIGINAL_ARTWORK_ATTRIBUTION: &str = r#"<p><b>Attribution of artwork:</b> All images used in these stories are © Sweet Publishing (<a href="http://www.sweetpublishing.com">www.sweetpublishing.com</a>) and are made available under a Creative Commons Attribution-Share Alike License (<a href="http://creativecommons.org/licenses/by-sa/3.0">http://creativecommons.org/licenses/by-sa/3.0</a>).</p>
+"#;
 
 #[cfg(test)]
 mod tests {
@@ -743,8 +754,10 @@ mod tests {
 
         let html = render_html(&p, None, &PrintOptions::default()).unwrap();
         assert!(html.contains("dir=\"rtl\""));
-        // Formato predeterminado: sin portada, título "Libro Capítulo N" y pie de página.
-        assert!(!html.contains("class=\"cover\""));
+        // Formato predeterminado: portada y licencia como el original, título "Libro Capítulo N" y pie de página.
+        assert!(html.contains("<section class=\"cover\"><h1>Tercera de Juan</h1></section>"));
+        assert!(html.contains("<h2>Creative Commons Attribution-ShareAlike 4.0 International</h2>"));
+        assert!(!html.contains("Attribution of artwork"));
         assert!(html.contains("<h2>Tercera de Juan Capítulo 1</h2>"));
         assert!(html.contains("@bottom-center { content: \"Página \" counter(page) \" de \" counter(pages)"));
         assert!(html.contains("font-size: 12pt"));
@@ -762,11 +775,10 @@ mod tests {
     fn optional_sections_follow_options() {
         let tmp = tempfile::tempdir().unwrap();
         let p = sample_project(tmp.path());
-        let opts = PrintOptions { cover: true, license: true, toc: true, page_numbers: false, heading: "centered".into(), paragraphs: "indent".into(), verse_color: true, lang: "en".into(), ..Default::default() };
+        let opts = PrintOptions { cover: false, license: false, toc: true, page_numbers: false, heading: "centered".into(), paragraphs: "indent".into(), verse_color: true, lang: "en".into(), ..Default::default() };
         let html = render_html(&p, None, &opts).unwrap();
-        assert!(html.contains("<h1>Tercera de Juan</h1>"));
-        assert!(html.contains("Ana"));
-        assert!(html.contains("<h3>License</h3>"));
+        assert!(!html.contains("class=\"cover\""));
+        assert!(!html.contains("Creative Commons"));
         assert!(html.contains("<h3>Contents</h3>"));
         assert!(html.contains("<h2>Tercera de Juan Chapter 1</h2>"));
         assert!(!html.contains("@bottom-center"));
