@@ -24,9 +24,14 @@ log.workspace = true
 sha2.workspace = true
 pulldown-cmark.workspace = true
 
-# git2 con HTTPS (WinHTTP / SecureTransport / OpenSSL del sistema) en escritorio.
-[target.'cfg(not(target_os = "android"))'.dependencies]
+# git2 con HTTPS. En Windows usa WinHTTP (sin OpenSSL).
+[target.'cfg(windows)'.dependencies]
 git2 = { version = "0.19", default-features = false, features = ["https"] }
+
+# En macOS y Linux, OpenSSL se compila dentro del binario: hace falta para el DMG
+# universal (Intel + Apple Silicon) en CI y evita depender de la versión del sistema.
+[target.'cfg(all(unix, not(target_os = "android")))'.dependencies]
+git2 = { version = "0.19", default-features = false, features = ["https", "vendored-openssl"] }
 
 # En Android no hay OpenSSL y compilarlo desde Windows falla: git local sin
 # transporte HTTPS (la sincronización con WACS en móvil queda pendiente).
