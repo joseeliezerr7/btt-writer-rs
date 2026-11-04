@@ -362,7 +362,7 @@ dependencies = [
 
 [[package]]
 name = "btt-core"
-version = "3.0.1"
+version = "3.0.2"
 dependencies = [
  "bzip2",
  "chrono",
@@ -386,7 +386,7 @@ dependencies = [
 
 [[package]]
 name = "btt-writer"
-version = "3.0.1"
+version = "3.0.2"
 dependencies = [
  "btt-core",
  "log",
