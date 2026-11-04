@@ -109,25 +109,59 @@ impl Paths {
 
     /// Importa proyectos y respaldos de una instalación anterior.
     pub fn migrate_from(&self, old_root: &Path, author: &Author) -> Result<Vec<ImportOutcome>> {
-        self.ensure()?;
-        let mut outcomes = vec![];
+        self.migrate_from_with_progress(old_root, author, |_| {})
+    }
+
+    /// Cuenta lo que migraría `migrate_from` (proyectos en carpeta + respaldos automáticos).
+    pub fn legacy_project_count(old_root: &Path) -> usize {
+        Self::legacy_items(old_root).len()
+    }
+
+    fn legacy_items(old_root: &Path) -> Vec<LegacyItem> {
+        let mut items = vec![];
         for dir_name in ["translations", "targetTranslations"] {
             let dir = old_root.join(dir_name);
-            if !dir.is_dir() {
-                continue;
-            }
-            for entry in std::fs::read_dir(&dir)? {
-                let entry = entry?;
-                if !entry.file_type()?.is_dir() || !entry.path().join("manifest.json").is_file() {
-                    continue;
+            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            for entry in rd.flatten() {
+                if entry.path().is_dir() && entry.path().join("manifest.json").is_file() {
+                    items.push(LegacyItem::Dir(entry.path()));
                 }
-                // Copiar a temp y luego importar (no se toca la carpeta antigua).
-                let staging = self.temp().join(format!("migrate-{}", uuid::Uuid::new_v4().simple()));
-                copy_dir(&entry.path(), &staging)?;
-                outcomes.push(tstudio::import_dir(&staging, &self.translations(), ImportMode::Merge, author));
-                let _ = crate::project::remove_dir_all_robust(&staging);
             }
         }
+        // 1.6 guarda cada proyecto como `automatic_backups/{id}.tstudio` (último estado).
+        let dir = old_root.join("automatic_backups");
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            let mut files: Vec<PathBuf> = rd.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|e| e == "tstudio")).collect();
+            files.sort();
+            items.extend(files.into_iter().map(LegacyItem::Archive));
+        }
+        items
+    }
+
+    /// Como `migrate_from`, informando el avance (`hechos`, `total`, nombre del elemento actual).
+    pub fn migrate_from_with_progress(&self, old_root: &Path, author: &Author, mut progress: impl FnMut(MigrateProgress)) -> Result<Vec<ImportOutcome>> {
+        self.ensure()?;
+        let items = Self::legacy_items(old_root);
+        let total = items.len();
+        let mut outcomes = vec![];
+        for (i, item) in items.into_iter().enumerate() {
+            let label = item.path().file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+            progress(MigrateProgress { done: i, total, current: label.clone() });
+            match item {
+                LegacyItem::Dir(path) => {
+                    // Copiar a temp y luego importar (no se toca la carpeta antigua).
+                    let staging = self.temp().join(format!("migrate-{}", uuid::Uuid::new_v4().simple()));
+                    copy_dir(&path, &staging)?;
+                    outcomes.push(tstudio::import_dir(&staging, &self.translations(), ImportMode::Merge, author));
+                    let _ = crate::project::remove_dir_all_robust(&staging);
+                }
+                LegacyItem::Archive(path) => match tstudio::import(&path, &self.translations(), ImportMode::Merge, author) {
+                    Ok(out) => outcomes.extend(out),
+                    Err(e) => outcomes.push(ImportOutcome { id: label, status: tstudio::ImportStatus::Failed { error: e.to_string() } }),
+                },
+            }
+        }
+        progress(MigrateProgress { done: total, total, current: String::new() });
         for dir_name in ["backups", "automatic_backups"] {
             let dir = old_root.join(dir_name);
             if dir.is_dir() {
@@ -155,6 +189,27 @@ impl Paths {
         }
         Ok(outcomes)
     }
+}
+
+enum LegacyItem {
+    Dir(PathBuf),
+    Archive(PathBuf),
+}
+
+impl LegacyItem {
+    fn path(&self) -> &Path {
+        match self {
+            LegacyItem::Dir(p) | LegacyItem::Archive(p) => p,
+        }
+    }
+}
+
+/// Avance de una migración: elementos procesados de un total y el actual.
+#[derive(Debug, Clone, Serialize)]
+pub struct MigrateProgress {
+    pub done: usize,
+    pub total: usize,
+    pub current: String,
 }
 
 fn copy_dir(from: &Path, to: &Path) -> Result<()> {

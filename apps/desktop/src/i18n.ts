@@ -336,6 +336,13 @@ const es: Record<string, string> = {
   "migrate.desc": "Se detectaron datos de versiones anteriores. Se copiarán los proyectos (sin borrar la carpeta original).",
   "migrate.start": "Migrar",
   "migrate.result": "Se migraron {n} proyectos.",
+  "migrate.running": "Migrando {current}… ({done}/{total}). Puede tardar varios minutos.",
+  "migrate.projects_found": "{n} proyectos",
+  "migrate.root_20": "BTT Writer 2.0",
+  "migrate.root_16": "BTT Writer 1.6",
+  "migrate.root_ts": "translationStudio",
+  "migrate.result_title": "Resultado de la migración",
+  "migrate.none_found": "No se encontraron proyectos para migrar en esta carpeta.",
 };
 
 const en: Record<string, string> = {
@@ -651,6 +658,13 @@ const en: Record<string, string> = {
   "migrate.desc": "Data from a previous version was found. Projects will be copied (the original folder is kept).",
   "migrate.start": "Migrate",
   "migrate.result": "{n} projects migrated.",
+  "migrate.running": "Migrating {current}… ({done}/{total}). This can take several minutes.",
+  "migrate.projects_found": "{n} projects",
+  "migrate.root_20": "BTT Writer 2.0",
+  "migrate.root_16": "BTT Writer 1.6",
+  "migrate.root_ts": "translationStudio",
+  "migrate.result_title": "Migration result",
+  "migrate.none_found": "No projects to migrate were found in this folder.",
 };
 
 const dicts: Record<Lang, Record<string, string>> = { es, en };

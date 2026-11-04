@@ -193,6 +193,7 @@ export async function mockInvoke<T>(cmd: string, a: Record<string, unknown> = {}
     case "import_from_wacs": return delay({ id: "cbt_3jn_text_reg", status: { status: "exists" } }) as T;
     case "list_backups": return delay([{ name: "cbt_3jn_text_reg.tstudio", path: "C:/mock/backups/cbt_3jn_text_reg.tstudio", modified: Math.floor(Date.now() / 1000) - 300 }]) as T;
     case "run_backup_now": return delay({ backed_up: projects.map((p) => p.id), skipped: [], failed: [] }) as T;
+    case "inspect_legacy": return delay({ path: s("root"), projects: 3 }) as T;
     case "migrate_legacy": return delay([{ id: "aa_mrk_text_reg", status: { status: "imported" } }]) as T;
     case "send_feedback": return delay("C:/Users/demo/BTT-Writer-3/logs/feedback.txt") as T;
     case "open_data_dir": return delay("C:/Users/demo/BTT-Writer-3") as T;

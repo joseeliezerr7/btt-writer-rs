@@ -402,6 +402,7 @@ export const api = {
   listBackups: () => call<BackupEntry[]>("list_backups"),
   runBackupNow: () => call<BackupReport>("run_backup_now"),
   migrateLegacy: (root: string) => call<ImportOutcome[]>("migrate_legacy", { root }),
+  inspectLegacy: (root: string) => call<{ path: string; projects: number }>("inspect_legacy", { root }),
   sendFeedback: (email: string, message: string) => call<string>("send_feedback", { email, message }),
   openDataDir: () => call<string>("open_data_dir"),
 };

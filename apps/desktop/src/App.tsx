@@ -91,10 +91,11 @@ export default function App() {
   );
 
   const reloadProfile = useCallback(async () => setProfile(await api.getProfile()), []);
+  const reloadSettings = useCallback(async () => setSettings(await api.getSettings()), []);
 
   const ctx = useMemo(
-    () => ({ info, settings, profile, view, navigate: setView, updateSettings, setProfile, reloadProfile }),
-    [info, settings, profile, view, updateSettings, reloadProfile],
+    () => ({ info, settings, profile, view, navigate: setView, updateSettings, setProfile, reloadProfile, reloadSettings }),
+    [info, settings, profile, view, updateSettings, reloadProfile, reloadSettings],
   );
 
   if (fatal) {

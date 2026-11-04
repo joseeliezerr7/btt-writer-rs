@@ -117,3 +117,35 @@ fn all_real_containers_open() {
     assert!(n > 0, "sin contenedores en {}", dir.display());
     let _ = Path::new("");
 }
+
+#[test]
+fn migrates_real_btt_writer_2_folder() {
+    let old = home().join("BTT-Writer-2.0");
+    if !old.join("translations").is_dir() {
+        eprintln!("omitida: no existe {}", old.display());
+        return;
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let paths = btt_core::appdata::Paths::new(tmp.path());
+    let out = paths.migrate_from(&old, &author()).unwrap();
+    for o in &out {
+        eprintln!("{} -> {:?}", o.id, o.status);
+    }
+    assert!(!out.is_empty(), "no se migró ningún proyecto");
+    assert!(out.iter().all(|o| matches!(o.status, ImportStatus::Imported)), "{out:?}");
+    let listed = Project::list(&paths.translations()).unwrap();
+    assert_eq!(listed.len(), out.len());
+    let p = Project::open_by_id(&paths.translations(), "cbt_3jn_text_reg").unwrap();
+    assert!(p.read_chunk("01", "01").unwrap().starts_with(r"\v 1 El anciano"));
+}
+
+#[test]
+fn migration_counts_legacy_backups_from_btt_writer_1_6() {
+    let old = home().join("BTT-Writer");
+    if !old.join("automatic_backups").is_dir() {
+        eprintln!("omitida: no existe {}", old.display());
+        return;
+    }
+    let n = btt_core::appdata::Paths::legacy_project_count(&old);
+    assert!(n >= 90, "se esperaban los respaldos automáticos de la 1.6, hay {n}");
+}

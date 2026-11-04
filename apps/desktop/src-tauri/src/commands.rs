@@ -2,7 +2,7 @@
 //! que el frontend muestre el mensaje de error tal cual.
 
 use crate::AppState;
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use btt_core::appdata::{Profile, Settings};
 use btt_core::gitrepo::{self, Credentials, MergeStatus, PushStatus};
 use btt_core::library::{CategoryRow, ProjectRow, ResourceRow, TargetLanguageRow};
@@ -1254,16 +1254,37 @@ fn run_backup_now(st: State<AppState>) -> R<btt_core::backup::BackupReport> {
 }
 
 #[tauri::command]
-fn migrate_legacy(st: State<AppState>, root: String) -> R<Vec<ImportOutcome>> {
-    let out = st.paths.migrate_from(Path::new(&root), &st.author()).map_err(err)?;
-    let mut s = st.settings.lock().unwrap();
-    if !s.migrated_from.contains(&root) {
-        s.migrated_from.push(root);
-    }
-    drop(s);
-    let _ = st.save_settings();
-    st.clear_rc_cache();
-    Ok(out)
+async fn migrate_legacy(app: tauri::AppHandle, root: String) -> R<Vec<ImportOutcome>> {
+    let handle = app.clone();
+    blocking(app, move |st| {
+        let author = st.author();
+        let out = st
+            .paths
+            .migrate_from_with_progress(Path::new(&root), &author, |p| {
+                let _ = handle.emit("migrate-progress", &p);
+            })
+            .map_err(err)?;
+        let mut s = st.settings.lock().unwrap();
+        if !s.migrated_from.contains(&root) {
+            s.migrated_from.push(root);
+        }
+        drop(s);
+        let _ = st.save_settings();
+        st.clear_rc_cache();
+        Ok(out)
+    })
+    .await
+}
+
+#[derive(Serialize)]
+pub struct LegacyRootInfo {
+    path: String,
+    projects: usize,
+}
+
+#[tauri::command]
+fn inspect_legacy(root: String) -> LegacyRootInfo {
+    LegacyRootInfo { projects: btt_core::appdata::Paths::legacy_project_count(Path::new(&root)), path: root }
 }
 
 #[tauri::command]
@@ -1345,6 +1366,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool {
         list_backups,
         run_backup_now,
         migrate_legacy,
+        inspect_legacy,
         send_feedback,
         open_data_dir,
     ]

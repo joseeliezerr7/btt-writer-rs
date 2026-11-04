@@ -1,11 +1,13 @@
 // Diálogos compartidos: detalles de proyecto, nuevo proyecto, fuentes,
 // importar, exportar, biblioteca, respaldos, migración, comentarios.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Archive, Check, Cloud, Database, Download, FileText, FileUp, FolderOpen, HardDriveDownload, Languages, Printer, RefreshCw, Server, Trash2, UploadCloud, UserPlus } from "lucide-react";
 import {
   api,
+  isTauri,
   resourceLabel,
   type CategoryRow,
   type ImportMode,
@@ -21,7 +23,7 @@ import {
 } from "../api";
 import { useApp } from "../app-context";
 import { formatDate, useT } from "../i18n";
-import { Button, Dialog, Field, OptionItem, Spinner, Switch, Tabs, useDebounced, useFeedback } from "./ui";
+import { Button, Dialog, Field, IconBadge, OptionItem, Spinner, Switch, Tabs, useDebounced, useFeedback } from "./ui";
 
 export function issueText(t: (k: string, v?: Record<string, string | number>) => string, i: Issue): string {
   return "verse" in i ? t(`issue.${i.kind}`, { verse: i.verse }) : t(`issue.${i.kind}`);
@@ -1008,25 +1010,73 @@ export function MigrateDialog({ roots, onClose, onDone }: { roots: string[]; onC
   const { t } = useT();
   const fb = useFeedback();
   const [busy, setBusy] = useState<string | null>(null);
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [progress, setProgress] = useState<{ done: number; total: number; current: string } | null>(null);
+  const [results, setResults] = useState<ImportOutcome[] | null>(null);
+
+  useEffect(() => {
+    roots.forEach((r) => api.inspectLegacy(r).then((i) => setCounts((c) => ({ ...c, [r]: i.projects }))).catch(() => {}));
+  }, [roots]);
+  useEffect(() => {
+    if (!isTauri) return;
+    const un = listen<{ done: number; total: number; current: string }>("migrate-progress", (e) => setProgress(e.payload));
+    return () => {
+      un.then((f) => f()).catch(() => {});
+    };
+  }, []);
+
+  const rootLabel = (r: string) => (/BTT-Writer-2\.0/i.test(r) ? t("migrate.root_20") : /translationStudio/i.test(r) ? t("migrate.root_ts") : t("migrate.root_16"));
+
   const go = async (root: string) => {
     setBusy(root);
+    setProgress(null);
     try {
       const out = await api.migrateLegacy(root);
+      setResults(out);
       fb.toast(t("migrate.result", { n: out.filter((o) => o.status.status !== "failed").length }), "success");
       onDone();
-      onClose();
     } catch (e) {
       fb.error(e);
     } finally {
       setBusy(null);
+      setProgress(null);
     }
   };
+
   return (
-    <Dialog title={t("migrate.title")} onClose={onClose}>
-      <p>{t("migrate.desc")}</p>
-      <div className="card list">
-        {roots.map((r) => <div key={r} className="list-item"><Download size={16} className="muted" /><code className="grow ellipsis small">{r}</code><Button size="sm" variant="primary" busy={busy === r} onClick={() => go(r)}>{t("migrate.start")}</Button></div>)}
-      </div>
+    <Dialog title={results ? t("migrate.result_title") : t("migrate.title")} onClose={busy ? undefined : onClose} footer={results ? <Button variant="primary" onClick={onClose}>{t("common.close")}</Button> : undefined}>
+      {results ? (
+        <div className="col">
+          {results.length === 0 && <p className="muted">{t("migrate.none_found")}</p>}
+          <div className="card list" style={{ maxHeight: 420, overflow: "auto" }}>
+            {results.map((o) => (
+              <div key={o.id} className="list-item"><strong className="grow ellipsis">{o.id}</strong><span className={"badge " + (o.status.status === "failed" ? "danger" : o.status.status === "conflicts" ? "warn" : "ok")}>{importStatusText(t, o)}</span></div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="col">
+          <p>{t("migrate.desc")}</p>
+          <div className="card list">
+            {roots.map((r) => (
+              <div key={r} className="list-item" style={{ cursor: "default" }}>
+                <IconBadge tone="accent"><Download size={18} /></IconBadge>
+                <div className="grow" style={{ minWidth: 0 }}>
+                  <strong>{rootLabel(r)}</strong> {counts[r] !== undefined && <span className="badge">{t("migrate.projects_found", { n: counts[r] })}</span>}
+                  <div className="small muted ellipsis">{r}</div>
+                </div>
+                <Button size="sm" variant="primary" busy={busy === r} disabled={!!busy || counts[r] === 0} onClick={() => go(r)}>{t("migrate.start")}</Button>
+              </div>
+            ))}
+          </div>
+          {busy && progress && progress.total > 0 && (
+            <div className="col" style={{ gap: ".3rem" }}>
+              <div className="progress-bar"><div style={{ width: `${Math.round((progress.done / progress.total) * 100)}%` }} /></div>
+              <span className="small muted">{t("migrate.running", { current: progress.current, done: progress.done, total: progress.total })}</span>
+            </div>
+          )}
+        </div>
+      )}
     </Dialog>
   );
 }

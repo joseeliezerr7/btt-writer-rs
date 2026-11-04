@@ -14,7 +14,7 @@ type DialogKind = null | "new" | "import" | "library" | "feedback" | "backups" |
 
 export default function HomeScreen() {
   const { t, lang } = useT();
-  const { profile, settings, updateSettings, navigate, info, setProfile } = useApp();
+  const { profile, settings, updateSettings, reloadSettings, navigate, info, setProfile } = useApp();
   const fb = useFeedback();
   const [projects, setProjects] = useState<ProjectItem[] | null>(null);
   const [books, setBooks] = useState<ProjectRow[]>([]);
@@ -205,7 +205,7 @@ export default function HomeScreen() {
       {dialog === "library" && <UpdateLibraryDialog onClose={() => setDialog(null)} />}
       {dialog === "feedback" && <FeedbackDialog onClose={() => setDialog(null)} />}
       {dialog === "backups" && <BackupsDialog onClose={() => setDialog(null)} onImported={load} />}
-      {dialog === "migrate" && <MigrateDialog roots={legacyRoots} onClose={() => setDialog(null)} onDone={() => { load(); updateSettings({}).catch(() => {}); }} />}
+      {dialog === "migrate" && <MigrateDialog roots={legacyRoots} onClose={() => setDialog(null)} onDone={() => { load(); reloadSettings().catch(() => {}); }} />}
       {details && <ProjectDetailsDialog item={details} onClose={() => setDetails(null)} onChanged={load} onDeleted={() => { setDetails(null); load(); }} />}
     </div>
   );

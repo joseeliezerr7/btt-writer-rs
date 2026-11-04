@@ -19,6 +19,7 @@ export interface AppCtx {
   updateSettings: (patch: Partial<Settings>) => Promise<void>;
   setProfile: (p: Profile) => void;
   reloadProfile: () => Promise<void>;
+  reloadSettings: () => Promise<void>;
 }
 
 export const AppContext = createContext<AppCtx>(null as unknown as AppCtx);
