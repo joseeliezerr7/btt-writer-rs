@@ -8,16 +8,69 @@ pub const START: &str = "<<<<<<< ";
 pub const SEP: &str = "=======";
 pub const END: &str = ">>>>>>> ";
 
+/// Marca "sin salto de línea aquí" al separar un marcador que estaba en medio de
+/// una línea (p. ej. `\c 23 <<<<<<< HEAD`, como deja git en el primer chunk de un
+/// capítulo).
+const JOIN: char = '\u{1}';
+
 pub fn has_conflicts(text: &str) -> bool {
-    text.lines().any(|l| l.starts_with(START))
+    text.lines().any(|l| l.starts_with(START) || l.contains(" <<<<<<< "))
+}
+
+/// Pone cada marcador en su propia línea; lo que lo precedía queda en una línea
+/// terminada en `JOIN` para volver a unirlo después sin salto.
+fn normalize(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for (i, line) in text.replace("\r\n", "\n").split('\n').enumerate() {
+        if i > 0 {
+            out.push('\n');
+        }
+        let mid = line.find(" <<<<<<< ").or_else(|| line.find(" >>>>>>> ")).map(|p| p + 1);
+        match mid {
+            Some(p) if p > 0 => {
+                out.push_str(&line[..p]);
+                out.push(JOIN);
+                out.push('\n');
+                out.push_str(&line[p..]);
+            }
+            _ => out.push_str(line),
+        }
+    }
+    out
 }
 
 /// Devuelve las versiones alternativas del texto. Sin conflictos → `[text]`.
 pub fn parse(text: &str) -> Vec<String> {
-    let text = text.replace("\r\n", "\n");
+    let text = normalize(text);
     let lines: Vec<&str> = text.split('\n').collect();
-    let mut out = expand(&lines);
+    let mut out: Vec<String> = expand(&lines).into_iter().map(rejoin).collect();
     dedup(&mut out);
+    out
+}
+
+/// Deshace los cortes de `normalize`. Si el texto previo al marcador se repite al
+/// inicio de la versión (`\c 23 ` + `\c 23 \v 1…`), se deja una sola vez.
+fn rejoin(s: String) -> String {
+    if !s.contains(JOIN) {
+        return s;
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s.as_str();
+    while let Some(p) = rest.find(JOIN) {
+        let before = &rest[..p];
+        let after = rest[p + JOIN.len_utf8()..].strip_prefix('\n').unwrap_or(&rest[p + JOIN.len_utf8()..]);
+        // `before` es lo que había antes del marcador en esa línea (desde su inicio).
+        let line_start = before.rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let prefix = &before[line_start..];
+        let dup = !prefix.trim().is_empty() && after.trim_start().starts_with(prefix.trim_end());
+        if dup {
+            out.push_str(&before[..line_start]);
+        } else {
+            out.push_str(before);
+        }
+        rest = after;
+    }
+    out.push_str(rest);
     out
 }
 
@@ -97,6 +150,21 @@ fn dedup(v: &mut Vec<String>) {
 mod tests {
     use super::*;
     use std::path::Path;
+
+    #[test]
+    fn marker_after_chapter_marker_on_same_line() {
+        // Forma real dejada por git en el primer chunk de un capítulo (Hechos 23, pech).
+        let raw = "\\c 23 <<<<<<< HEAD\n\\c 23 \\v 1 Pablo local \\v 2 b\n=======\n\\c 23 \\v 1 Pablo servidor \\v 2 b\n>>>>>>> 316c2de191a84615800cf7a11d416841e49c6643\n";
+        assert!(has_conflicts(raw));
+        let got = parse(raw);
+        assert_eq!(got, vec!["\\c 23 \\v 1 Pablo local \\v 2 b\n", "\\c 23 \\v 1 Pablo servidor \\v 2 b\n"]);
+        for v in &got {
+            assert!(!has_conflicts(v));
+        }
+        // Prefijo que no se repite: se une sin salto de línea.
+        let raw2 = "intro <<<<<<< HEAD\nuno\n=======\ndos\n>>>>>>> x";
+        assert_eq!(parse(raw2), vec!["intro uno", "intro dos"]);
+    }
 
     #[test]
     fn simple_two_way() {
