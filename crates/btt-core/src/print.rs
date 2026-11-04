@@ -631,8 +631,18 @@ pub fn render_document(project: &Project, sources: PrintSources<'_>, opts: &Prin
 * {{ box-sizing: border-box; }}
 html {{ background: #e9ecf1; }}
 body {{ font-family: {font}; font-size: {size}pt; line-height: {line_height}; color: #111; margin: 0; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
-@media screen {{ body {{ max-width: 8.5in; margin: 1.2rem auto; padding: {margin}cm; box-shadow: 0 2px 20px rgba(0,0,0,.18); min-height: 11in; }}
-  .chapter + .chapter, .helps, .words, .license, .toc, .cover + * {{ border-top: 1px dashed #bbb; padding-top: 1.6em; margin-top: 1.6em; }} }}
+@media screen {{
+  body {{ max-width: 8.5in; margin: 1.2rem auto; padding: {margin}cm; box-shadow: 0 2px 20px rgba(0,0,0,.18); min-height: 11in; }}
+  /* Vista previa paginada (la construye el script al final del documento). */
+  html.paged body {{ max-width: none; margin: 0; padding: 0; box-shadow: none; min-height: 0; background: transparent; }}
+  html.paged #doc {{ display: none; }}
+  .pages {{ padding: 14px 0 20px; }}
+  .sheet {{ width: 8.5in; height: 11in; padding: {margin}cm; background: #fff; box-shadow: 0 2px 16px rgba(0,0,0,.2); margin: 0 auto 16px; position: relative; overflow: hidden; }}
+  .sheet-body {{ height: 100%; overflow: hidden; }}
+  .sheet-footer {{ position: absolute; left: 0; right: 0; bottom: calc({margin}cm * .4); text-align: center; font-family: Cambria, Georgia, serif; font-size: 10pt; color: #333; }}
+}}
+@media print {{ .pages {{ display: none !important; }} #doc {{ display: block !important; }} }}
+p.cont {{ text-indent: 0 !important; }}
 h1, h2, h3, h4 {{ font-weight: 700; line-height: 1.2; }}
 a {{ color: inherit; text-decoration: none; }}
 .cover {{ text-align: center; page-break-after: always; padding-top: calc(5.5in - 2in - {margin}cm); }}
@@ -679,9 +689,13 @@ img.obs {{ display: block; max-width: 100%; margin: .5em auto; break-inside: avo
 .word p {{ margin: 0 0 .4em; }}
 .word ul {{ margin: .3em 0 .5em; padding-inline-start: 2.2em; }}
 .word li {{ margin: 0 0 .25em; }}
-</style></head><body>
-{cover}{license_html}{toc_html}{chapters}{words_section}
+</style></head><body data-page-numbers="{page_numbers}" data-page-label="{page_label}">
+<div id="doc">{cover}{license_html}{toc_html}{chapters}{words_section}</div>
+<script>{preview_script}</script>
 </body></html>"#,
+        page_numbers = if opts.page_numbers { "1" } else { "0" },
+        page_label = format!("{} {{n}} {} {{m}}", lb.page, lb.of),
+        preview_script = PREVIEW_SCRIPT,
         lang = esc(&m.target_language.id),
         dir = dir,
         title = esc(&title),
@@ -720,6 +734,133 @@ const ORIGINAL_LICENSE_HTML: &str = r#"<h2>Creative Commons Attribution-ShareAli
 <p class="bullet">&#8226; You do not have to comply with the license for elements of the material in the public domain or where your use is permitted by an applicable exception or limitation.</p>
 <p class="bullet">&#8226; No warranties are given. The license may not give you all of the permissions necessary for your intended use. For example, other rights such as publicity, privacy, or moral rights may limit how you use the material.</p>
 "#;
+
+/// Vista previa paginada en pantalla: reparte el documento (`#doc`) en hojas carta con los
+/// márgenes elegidos, respetando los saltos de sección, partiendo los párrafos largos y
+/// numerando las hojas. Al imprimir se usa el documento original y el motor pagina solo.
+const PREVIEW_SCRIPT: &str = r#"(function () {
+  if (window.matchMedia && window.matchMedia('print').matches) return;
+  var doc = document.getElementById('doc');
+  if (!doc) return;
+  var pageNumbers = document.body.getAttribute('data-page-numbers') === '1';
+  var label = document.body.getAttribute('data-page-label') || '{n} / {m}';
+  var pagesEl = document.createElement('div');
+  pagesEl.className = 'pages';
+  var sheets = [], body = null, stack = [];
+  function isMulticol(el) { var c = getComputedStyle(el).columnCount; return c && c !== 'auto' && parseInt(c, 10) > 1; }
+  function sizeMulticol(el) {
+    el.style.columnFill = 'auto'; el.style.overflow = 'hidden';
+    var r = el.getBoundingClientRect(), b = body.getBoundingClientRect();
+    el.style.height = Math.max(40, b.bottom - r.top) + 'px';
+  }
+  function newPage() {
+    // Contenedores que quedaron vacíos al final de la hoja anterior (solo su borde o relleno).
+    for (var j = stack.length - 1; j >= 0; j--) { var d = stack[j].dest; if (d && !d.childNodes.length) d.remove(); else break; }
+    var s = document.createElement('div'); s.className = 'sheet';
+    body = document.createElement('div'); body.className = 'sheet-body';
+    s.appendChild(body); pagesEl.appendChild(s); sheets.push(s);
+    var parent = body;
+    for (var i = 0; i < stack.length; i++) {
+      var shell = stack[i].src.cloneNode(false); shell.removeAttribute('id');
+      parent.appendChild(shell); stack[i].dest = shell; parent = shell;
+      if (isMulticol(shell)) sizeMulticol(shell);
+    }
+  }
+  function dest() { return stack.length ? stack[stack.length - 1].dest : body; }
+  function fits() {
+    if (body.scrollHeight > body.clientHeight + 0.5) return false;
+    for (var i = 0; i < stack.length; i++) { var d = stack[i].dest; if (isMulticol(d) && d.scrollWidth > d.clientWidth + 0.5) return false; }
+    return true;
+  }
+  function pageEmpty() { return body.textContent.trim() === '' && !body.querySelector('img'); }
+  var LEAF = /^(P|H1|H2|H3|H4|H5|H6|LI|IMG|HR)$/;
+  function tokens(p) {
+    var out = [], kids = p.childNodes;
+    for (var i = 0; i < kids.length; i++) {
+      var k = kids[i];
+      if (k.nodeType === 3) { var m = k.textContent.match(/\S+\s*|\s+/g) || []; for (var j = 0; j < m.length; j++) out.push(m[j]); }
+      else out.push(k);
+    }
+    return out;
+  }
+  function render(p, toks, from, to) {
+    p.innerHTML = '';
+    for (var i = from; i < to; i++) { var t = toks[i]; p.appendChild(typeof t === 'string' ? document.createTextNode(t) : t.cloneNode(true)); }
+  }
+  function fill(p, toks, from) {
+    var lo = from, hi = toks.length;
+    while (lo < hi) { var mid = (lo + hi + 1) >> 1; render(p, toks, from, mid); if (fits()) lo = mid; else hi = mid - 1; }
+    render(p, toks, from, lo);
+    return lo;
+  }
+  function splitParagraph(node, force) {
+    var toks = tokens(node);
+    if (toks.length < 2) return false;
+    var p = node.cloneNode(false);
+    dest().appendChild(p);
+    var k = fill(p, toks, 0);
+    if (k < 4 && !force) { p.remove(); return false; }
+    if (k === 0) p.remove();
+    var rest = k;
+    while (rest < toks.length) {
+      newPage();
+      var q = node.cloneNode(false); q.classList.add('cont');
+      dest().appendChild(q);
+      var next = fill(q, toks, rest);
+      if (next === rest) { next = rest + 1; render(q, toks, rest, next); }
+      rest = next;
+    }
+    return true;
+  }
+  function placeLeaf(node) {
+    var el = node.cloneNode(true);
+    dest().appendChild(el);
+    if (fits()) return;
+    el.remove();
+    if (el.tagName === 'P' && el.textContent.length > 60 && !pageEmpty() && splitParagraph(node, false)) return;
+    if (pageEmpty()) { dest().appendChild(el); if (!fits() && el.tagName === 'P') { el.remove(); splitParagraph(node, true); } return; }
+    newPage();
+    dest().appendChild(el);
+    if (!fits()) { el.remove(); if (el.tagName === 'P') splitParagraph(node, true); else dest().appendChild(el); }
+  }
+  function flow(node) {
+    if (node.nodeType === 3) {
+      if (!node.textContent.trim()) return;
+      var t = document.createTextNode(node.textContent);
+      dest().appendChild(t);
+      if (!fits() && !pageEmpty()) { t.remove(); newPage(); dest().appendChild(t); }
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    if (LEAF.test(node.tagName) || node.classList.contains('note-title') || node.classList.contains('ref')) { placeLeaf(node); return; }
+    var shell = node.cloneNode(false); shell.removeAttribute('id');
+    dest().appendChild(shell);
+    stack.push({ src: node, dest: shell });
+    if (isMulticol(shell)) sizeMulticol(shell);
+    var kids = Array.prototype.slice.call(node.childNodes);
+    for (var i = 0; i < kids.length; i++) flow(kids[i]);
+    stack.pop();
+  }
+  document.documentElement.classList.add('paged');
+  document.body.appendChild(pagesEl);
+  var sections = Array.prototype.slice.call(doc.children);
+  for (var i = 0; i < sections.length; i++) { newPage(); flow(sections[i]); }
+  if (sheets.length > 1 && pageEmpty()) sheets.pop().remove();
+  if (pageNumbers) {
+    for (var n = 0; n < sheets.length; n++) {
+      var f = document.createElement('div'); f.className = 'sheet-footer';
+      f.textContent = label.replace('{n}', n + 1).replace('{m}', sheets.length);
+      sheets[n].appendChild(f);
+    }
+  }
+  function fit() {
+    var first = pagesEl.firstChild; if (!first) return;
+    var w = document.documentElement.clientWidth - 24;
+    pagesEl.style.zoom = Math.min(1, w / first.offsetWidth);
+  }
+  fit();
+  window.addEventListener('resize', fit);
+})();"#;
 
 /// Atribución de las imágenes de OBS, como en el original.
 const ORIGINAL_ARTWORK_ATTRIBUTION: &str = r#"<p><b>Attribution of artwork:</b> All images used in these stories are © Sweet Publishing (<a href="http://www.sweetpublishing.com">www.sweetpublishing.com</a>) and are made available under a Creative Commons Attribution-Share Alike License (<a href="http://creativecommons.org/licenses/by-sa/3.0">http://creativecommons.org/licenses/by-sa/3.0</a>).</p>
@@ -785,6 +926,33 @@ mod tests {
         assert!(html.contains("text-align: center"));
         assert!(html.contains("p.p { text-indent: 1.4em; }"));
         assert!(html.contains("sup.v { color: #0e6f9a"));
+    }
+
+    /// La CSP de la app solo permite scripts propios: el script de la vista previa va
+    /// autorizado por su hash en `tauri.conf.json`, que debe actualizarse si cambia.
+    #[test]
+    fn preview_script_hash_is_in_tauri_csp() {
+        use sha2::{Digest, Sha256};
+        let digest = Sha256::digest(PREVIEW_SCRIPT.as_bytes());
+        let hash = base64(&digest);
+        let conf = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../apps/desktop/src-tauri/tauri.conf.json")).unwrap();
+        assert!(conf.contains(&format!("'sha256-{hash}'")), "pon 'sha256-{hash}' en script-src de la CSP (apps/desktop/src-tauri/tauri.conf.json)");
+    }
+
+    fn base64(bytes: &[u8]) -> String {
+        const T: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for chunk in bytes.chunks(3) {
+            let n = chunk.iter().enumerate().fold(0u32, |acc, (i, b)| acc | (*b as u32) << (16 - 8 * i));
+            for i in 0..4 {
+                if i <= chunk.len() {
+                    out.push(T[((n >> (18 - 6 * i)) & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+            }
+        }
+        out
     }
 
     #[test]
