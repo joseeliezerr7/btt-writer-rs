@@ -264,8 +264,41 @@ export function FeedbackProvider({ children, labels }: { children: ReactNode; la
 }
 
 /** Renderiza Markdown muy simple (encabezados, párrafos, listas, negrita, enlaces) de forma segura. */
+const ENTITIES: Record<string, string> = { quot: '"', amp: "&", lt: "<", gt: ">", apos: "'", nbsp: " ", ldquo: "“", rdquo: "”", lsquo: "‘", rsquo: "’", hellip: "…", ndash: "–", mdash: "—" };
+
+function decodeEntities(s: string): string {
+  return s.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (m, e: string) => {
+    if (e[0] === "#") {
+      const code = e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+      return Number.isFinite(code) ? String.fromCodePoint(code) : m;
+    }
+    return ENTITIES[e.toLowerCase()] ?? m;
+  });
+}
+
+/** Las bibliotecas antiguas (tW/tN en español, etc.) guardan HTML en vez de Markdown.
+ *  Convierte las etiquetas básicas (p, ul/ol/li, b/strong, i/em, br, h#, a) y las
+ *  entidades a Markdown simple; cualquier otra etiqueta se elimina. */
+export function htmlToMarkdown(s: string): string {
+  if (!/<\/?(p|ul|ol|li|b|i|em|strong|br|a|h[1-6]|div|span)\b|&(quot|amp|lt|gt|apos|nbsp|#\d+|#x[0-9a-f]+);/i.test(s)) return s;
+  let t = s.replace(/\r\n/g, "\n");
+  t = t.replace(/<br\s*\/?>/gi, "\n");
+  t = t.replace(/<h([1-6])[^>]*>/gi, (_, n: string) => "\n\n" + "#".repeat(Number(n)) + " ").replace(/<\/h[1-6]>/gi, "\n\n");
+  t = t.replace(/<p[^>]*>/gi, "\n\n").replace(/<\/p>/gi, "\n\n");
+  t = t.replace(/<\/?(ul|ol)[^>]*>/gi, "\n\n");
+  t = t.replace(/<li[^>]*>\s*/gi, "\n* ").replace(/<\/li>/gi, "");
+  t = t.replace(/<(b|strong)[^>]*>/gi, "**").replace(/<\/(b|strong)>/gi, "**");
+  t = t.replace(/<\/?(i|em)[^>]*>/gi, "");
+  t = t.replace(/<a\s+[^>]*href=["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, "[$2]($1)");
+  t = t.replace(/<[^>]+>/g, "");
+  t = decodeEntities(t);
+  // Una lista es un solo bloque: sus elementos van en líneas seguidas.
+  t = t.replace(/\n{2,}(\* )/g, "\n\n$1").replace(/(\* [^\n]*)\n{2,}(?=\* )/g, "$1\n");
+  return t.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+}
+
 export function SimpleMarkdown({ text, onLink }: { text: string; onLink?: (href: string) => void }) {
-  const blocks = text.replace(/\r\n/g, "\n").split(/\n{2,}/);
+  const blocks = htmlToMarkdown(text).replace(/\r\n/g, "\n").split(/\n{2,}/);
   return (
     <div className="body">
       {blocks.map((b, i) => {
