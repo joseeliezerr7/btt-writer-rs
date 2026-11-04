@@ -682,11 +682,56 @@ async fn commit_project(app: tauri::AppHandle, id: String) -> R<Option<String>> 
 }).await
 }
 
+/// Una versión guardada de un chunk, con un fragmento del texto para distinguirla.
+#[derive(Serialize)]
+pub struct HistoryEntry {
+    id: String,
+    time: i64,
+    message: String,
+    author: String,
+    preview: String,
+    /// El texto de esta versión es el que está ahora en el proyecto.
+    current: bool,
+}
+
+/// Versiones guardadas de un chunk (la más reciente primero). Guarda antes los cambios pendientes.
 #[tauri::command]
-fn chunk_history(st: State<AppState>, id: String, chapter: String, chunk: String) -> R<Vec<gitrepo::Commit>> {
+fn chunk_history(st: State<AppState>, id: String, chapter: String, chunk: String) -> R<Vec<HistoryEntry>> {
     let p = open_project(&st, &id)?;
     gitrepo::commit_all(&p.root, &st.author(), gitrepo::AUTOSAVE_MESSAGE).map_err(err)?;
-    gitrepo::file_history(&p.root, &format!("{chapter}/{chunk}.txt")).map_err(err)
+    let file = format!("{chapter}/{chunk}.txt");
+    let norm = |s: &str| s.replace("\r\n", "\n").trim().to_string();
+    let current = norm(&p.read_chunk(&chapter, &chunk).unwrap_or_default());
+    let mut out = vec![];
+    for c in gitrepo::file_history(&p.root, &file).map_err(err)? {
+        let text = gitrepo::file_at(&p.root, &c.id, &file).unwrap_or_default();
+        let plain = btt_core::usfm::to_plain_text(&text).split_whitespace().collect::<Vec<_>>().join(" ");
+        let preview: String = plain.chars().take(110).collect();
+        out.push(HistoryEntry { current: norm(&text) == current, id: c.id, time: c.time, message: c.message, author: c.author, preview });
+    }
+    Ok(out)
+}
+
+/// Vuelve a una versión anterior de un chunk y la registra en el historial como
+/// "restore <commit>" (la versión que había se conserva y se puede recuperar).
+/// Si el texto ya era el mismo, no crea ninguna entrada.
+#[tauri::command]
+fn restore_chunk(st: State<AppState>, id: String, commit: String, chapter: String, chunk: String) -> R<String> {
+    let p = open_project(&st, &id)?;
+    let file = format!("{chapter}/{chunk}.txt");
+    let text = gitrepo::file_at(&p.root, &commit, &file).map_err(err)?;
+    let norm = |s: &str| s.replace("\r\n", "\n").trim().to_string();
+    if norm(&text) == norm(&p.read_chunk(&chapter, &chunk).unwrap_or_default()) {
+        return Ok(text);
+    }
+    if text.trim().is_empty() && chunk != "title" && chunk != "reference" {
+        p.delete_chunk(&chapter, &chunk).map_err(err)?;
+    } else {
+        p.write_chunk(&chapter, &chunk, &text).map_err(err)?;
+    }
+    let short: String = commit.chars().take(7).collect();
+    gitrepo::commit_all(&p.root, &st.author(), &format!("restore {short}")).map_err(err)?;
+    Ok(text)
 }
 
 #[tauri::command]
@@ -1524,6 +1569,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool {
         commit_project,
         chunk_history,
         chunk_at_commit,
+        restore_chunk,
         search_project,
         get_source_chapter,
         get_source_info,

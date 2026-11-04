@@ -519,3 +519,7 @@ mark { background: #ffe58a; color: inherit; border-radius: 2px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+
+/* Historial de un chunk */
+.history-item { align-items: center; }
+.history-preview { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }

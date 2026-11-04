@@ -357,6 +357,14 @@ export interface Commit {
   time: number;
   message: string;
 }
+/** Versión guardada de un chunk (historial). */
+export interface HistoryEntry extends Commit {
+  author: string;
+  /** Fragmento del texto de esa versión. */
+  preview: string;
+  /** Es el texto que está ahora en el proyecto. */
+  current: boolean;
+}
 export interface SearchHit {
   chapter: string;
   chunk: string;
@@ -411,8 +419,10 @@ export const api = {
   markAllChunks: (id: string) => call<MarkAllResult>("mark_all_chunks", { id }),
   validateProject: (id: string) => call<ChunkValidation[]>("validate_project", { id }),
   commitProject: (id: string) => call<string | null>("commit_project", { id }),
-  chunkHistory: (id: string, chapter: string, chunk: string) => call<Commit[]>("chunk_history", { id, chapter, chunk }),
+  chunkHistory: (id: string, chapter: string, chunk: string) => call<HistoryEntry[]>("chunk_history", { id, chapter, chunk }),
   chunkAtCommit: (id: string, commit: string, chapter: string, chunk: string) => call<string>("chunk_at_commit", { id, commit, chapter, chunk }),
+  /** Vuelve a una versión anterior (queda registrada como restauración) y devuelve el texto. */
+  restoreChunk: (id: string, commit: string, chapter: string, chunk: string) => call<string>("restore_chunk", { id, commit, chapter, chunk }),
   searchProject: (id: string, query: string, inSource: boolean) => call<SearchHit[]>("search_project", { id, query, inSource }),
 
   getSourceChapter: (language: string, project: string, resource: string, chapter: string) =>

@@ -7,6 +7,7 @@ import {
   type ChunkData,
   type ChunkInfo,
   type HelpItem,
+  type HistoryEntry,
   type Helps,
   type ProjectDetail,
   type ResourceRow,
@@ -443,7 +444,7 @@ function ChunkCard(props: {
   const [helps, setHelps] = useState<Helps | null>(null);
   const [helpTab, setHelpTab] = useState<"notes" | "words" | "questions">("notes");
   const [word, setWord] = useState<WordArticle | null>(null);
-  const [history, setHistory] = useState<{ id: string; time: number; message: string }[] | null>(null);
+  const [history, setHistory] = useState<HistoryEntry[] | null>(null);
   const [sourceWord, setSourceWord] = useState<WordArticle | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
@@ -555,11 +556,33 @@ function ChunkCard(props: {
   const openHistory = async () => {
     setHistory(await api.chunkHistory(id, chapter, chunk.id).catch(() => []));
   };
-  const restore = async (commit: string) => {
-    const old = await api.chunkAtCommit(id, commit, chapter, chunk.id).catch((e) => { fb.error(e); return null; });
-    if (old === null) return;
-    save(old);
-    setHistory(null);
+  const restore = async (entry: HistoryEntry) => {
+    if (entry.current) {
+      setHistory(null);
+      return;
+    }
+    if (timer.current) clearTimeout(timer.current);
+    try {
+      const restored = await api.restoreChunk(id, entry.id, chapter, chunk.id);
+      setText(restored);
+      setSaved(true);
+      setHistory(null);
+      await reload();
+      props.onChanged();
+      fb.toast(t("translate.restored_toast", { date: formatDate(entry.time, lang, "") }), "success");
+    } catch (e) {
+      fb.error(e);
+    }
+  };
+  /** Texto legible del motivo de una versión ("auto save", "restore abc1234", mensajes de fusión…). */
+  const historyLabel = (h: HistoryEntry, all: HistoryEntry[]) => {
+    if (h.message === "auto save") return t("translate.autosave");
+    const m = /^restore ([0-9a-f]{7})/.exec(h.message);
+    if (m) {
+      const from = all.find((x) => x.id.startsWith(m[1]));
+      return from ? t("translate.restored_from", { date: formatDate(from.time, lang, "") }) : t("translate.restored");
+    }
+    return h.message;
   };
 
   const title = chapter === "front" ? t("translate.book_title") : chunk.id === "title" ? t("translate.chapter_title") : chunk.id === "reference" ? t("translate.chapter_reference") : isTw ? sourceWord?.title || chunk.id : `${chapter.replace(/^0+/, "")}:${props.sourceChunk?.chunk_title || chunk.id.replace(/^0+/, "")}`;
@@ -719,9 +742,22 @@ function ChunkCard(props: {
         </Dialog>
       )}
       {history && (
-        <Dialog title={t("translate.history")} narrow onClose={() => setHistory(null)}>
-          <div className="card list" style={{ maxHeight: 360, overflow: "auto" }}>
-            {history.map((h) => <div key={h.id} className="list-item" onClick={() => restore(h.id)}><span className="grow small">{new Date(h.time * 1000).toLocaleString()} · {h.message}</span><span className="small muted">{t("translate.restore_version")}</span></div>)}
+        <Dialog title={t("translate.history")} onClose={() => setHistory(null)}>
+          <p className="muted small" style={{ margin: "0 0 .6rem" }}>{t("translate.history_hint")}</p>
+          <div className="card list" style={{ maxHeight: 420, overflow: "auto" }}>
+            {history.map((h) => (
+              <div key={h.id} className={"list-item history-item" + (h.current ? " selected" : "")} onClick={() => restore(h)}>
+                <div className="grow col" style={{ gap: ".15rem", minWidth: 0 }}>
+                  <span className="small">
+                    <strong>{formatDate(h.time, lang, "")}</strong>
+                    {h.author && <span className="muted"> · {h.author}</span>}
+                    <span className="muted"> · {historyLabel(h, history)}</span>
+                  </span>
+                  <span className="small muted history-preview">{h.preview || t("translate.empty_version")}</span>
+                </div>
+                {h.current ? <span className="badge success">{t("translate.current_version")}</span> : <span className="small muted">{t("translate.restore_version")}</span>}
+              </div>
+            ))}
             {history.length === 0 && <div className="list-item muted">{t("common.none")}</div>}
           </div>
         </Dialog>
