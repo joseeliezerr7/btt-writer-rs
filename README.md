@@ -32,10 +32,10 @@ scripts/cargo.cmd       envoltorio de cargo con el entorno de Visual Studio (Win
 
 ```bash
 # pruebas del núcleo (55 pruebas; las de red se ejecutan con --ignored)
-scripts\cargo.cmd test -p btt-core
+.\scripts\cargo.cmd test -p btt-core
 
 # lint
-scripts\cargo.cmd clippy -p btt-core --all-targets
+.\scripts\cargo.cmd clippy -p btt-core --all-targets
 
 # app de escritorio en desarrollo (compila Rust + Vite)
 cd apps/desktop && npm install && npm run tauri dev
@@ -47,7 +47,7 @@ cd apps/desktop && npm run tauri build
 cd apps/desktop && npm run tauri android dev
 ```
 
-En Windows, si `cargo` falla con `LNK1104: no se puede abrir msvcrt.lib`, ejecuta los comandos a través de `scripts\cargo.cmd` o desde un "Developer Command Prompt", que cargan el entorno del compilador.
+En Windows, si `cargo` falla con `LNK1104: no se puede abrir msvcrt.lib`, ejecuta los comandos a través de `.\scripts\cargo.cmd` o desde un "Developer Command Prompt", que cargan el entorno del compilador.
 
 ## Datos
 
@@ -75,8 +75,8 @@ La primera vez se despliegan el `index.sqlite` y 11 contenedores (en/ru: Marcos,
 
 ## Limitaciones conocidas
 
-- El CDN de fuentes (`cdn.bibletranslationtools.org`) está detrás de una protección anti-bot de Cloudflare que rechaza identificaciones con URL (como `curl`). La app se identifica como `BTT-Writer/3.0` y descarga correctamente (prueba en vivo: `scripts\cargo.cmd test -p btt-core --test live_download -- --ignored`). Si alguna vez rechaza la descarga, la app lo indica y permite importar `.tsrc` o `index.sqlite` manualmente.
+- El CDN de fuentes (`cdn.bibletranslationtools.org`) está detrás de una protección anti-bot de Cloudflare que rechaza identificaciones con URL (como `curl`). La app se identifica como `BTT-Writer/3.0` y descarga correctamente (prueba en vivo: `.\scripts\cargo.cmd test -p btt-core --test live_download -- --ignored`). Si alguna vez rechaza la descarga, la app lo indica y permite importar `.tsrc` o `index.sqlite` manualmente.
 - El envío de comentarios guarda un archivo en `logs/` (el webhook del helpdesk original requiere un token privado).
 - La subida a WACS usa HTTPS con token (no claves SSH).
 - En Android `git2` se compila sin transporte HTTPS (compilar OpenSSL desde Windows falla): el historial git local funciona, pero subir/clonar desde WACS en el móvil queda pendiente (se resuelve compilando el APK desde Linux/macOS o con OpenSSL precompilado para NDK).
-- Compilar Android en Windows: `scripts\android.cmd build --debug --target aarch64 --apk` (carga el entorno de Visual Studio, el SDK/NDK y el JDK de Android Studio).
+- Compilar Android en Windows: `.\scripts\android.cmd build --debug --target aarch64 --apk` (carga el entorno de Visual Studio, el SDK/NDK y el JDK de Android Studio).
