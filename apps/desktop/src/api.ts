@@ -154,7 +154,41 @@ export interface PrintRequest {
   columns: 1 | 2;
   font_size_pt: number;
   font_family: string;
+  /** Portada, licencia e índice (apagados en el formato clásico). */
+  cover: boolean;
+  license: boolean;
+  toc: boolean;
+  /** Notas de traducción después de cada capítulo y glosario de palabras al final. */
+  notes: boolean;
+  words: boolean;
+  page_numbers: boolean;
+  /** Números de versículo en azul (si no, del color del texto). */
+  verse_color: boolean;
+  paragraphs: "spaced" | "indent";
+  heading: "left" | "centered";
+  margin_cm: number;
+  line_height: number;
 }
+
+/** Formato predeterminado: el PDF clásico de los equipos (Arial 12, notas a dos columnas, pie con número de página). */
+export const DEFAULT_PRINT: PrintRequest = {
+  include_incomplete: true,
+  include_images: false,
+  columns: 1,
+  font_size_pt: 12,
+  font_family: "Arial",
+  cover: false,
+  license: false,
+  toc: false,
+  notes: true,
+  words: true,
+  page_numbers: true,
+  verse_color: false,
+  paragraphs: "spaced",
+  heading: "left",
+  margin_cm: 2.5,
+  line_height: 1.5,
+};
 
 export interface CommitInfo {
   id: string;

@@ -446,7 +446,10 @@ input[type="checkbox"] { accent-color: var(--primary); }
 
 /* Impresión: opciones + vista previa */
 .print-layout { display: grid; grid-template-columns: 250px 1fr; gap: 1rem; min-height: 520px; }
-.print-options { align-content: start; }
+.print-options { align-content: start; max-height: 70vh; overflow-y: auto; padding-right: .3rem; gap: .9rem; }
+.print-group { display: flex; flex-direction: column; gap: .45rem; }
+.print-group h4 { margin: 0 0 .15rem; font-size: .72rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.print-group .row > * { flex: 1; min-width: 0; }
 .print-preview { background: #e9ecf1; border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; display: flex; }
 .print-preview iframe { width: 100%; height: 100%; min-height: 520px; border: 0; background: #e9ecf1; flex: 1; }
 @media (max-width: 900px) {

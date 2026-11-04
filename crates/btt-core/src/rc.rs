@@ -397,6 +397,37 @@ impl ResourceContainer {
         Ok::<_, ()>(art).ok()
     }
 
+    /// Título y cuerpo de un artículo tW sin leer `config.yml` (rápido para listados largos).
+    pub fn word_text(&self, slug: &str) -> Option<(String, String)> {
+        self.file_str(&format!("content/{slug}/01.md")).map(|md| split_title(&md))
+    }
+
+    /// Palabras tW de todos los chunks de un libro, con una sola lectura de `content/config.yml`.
+    /// Clave: (capítulo, chunk) tal como aparecen en el contenedor (`"01"`, `"05"`).
+    pub fn words_by_chunk(&self) -> BTreeMap<(String, String), Vec<String>> {
+        let mut out = BTreeMap::new();
+        let Some(y) = self.file_str("content/config.yml") else { return out };
+        let Ok(v) = serde_yaml::from_str::<serde_yaml::Value>(&y) else { return out };
+        let Some(content) = v.get("content").and_then(|c| c.as_mapping()) else { return out };
+        for (ch, chunks) in content {
+            let (Some(ch), Some(chunks)) = (yaml_key(ch), chunks.as_mapping()) else { continue };
+            for (c, entry) in chunks {
+                let Some(c) = yaml_key(c) else { continue };
+                let mut words: Vec<String> = entry
+                    .get("words")
+                    .and_then(|w| w.as_sequence())
+                    .map(|seq| seq.iter().filter_map(|w| w.as_str()).map(|w| w.rsplit('/').next().unwrap_or(w).to_string()).collect())
+                    .unwrap_or_default();
+                words.sort();
+                words.dedup();
+                if !words.is_empty() {
+                    out.insert((ch.clone(), c), words);
+                }
+            }
+        }
+        out
+    }
+
     /// Busca palabras por título o alias (insensible a mayúsculas).
     pub fn search_words(&self, query: &str) -> Vec<WordArticle> {
         let q = query.trim().to_lowercase();
@@ -412,6 +443,15 @@ impl ResourceContainer {
                     || w.aliases.iter().any(|a| a.to_lowercase().contains(&q))
             })
             .collect()
+    }
+}
+
+/// Clave YAML como texto; los números (`01` leído como 1) se devuelven con dos dígitos.
+fn yaml_key(k: &serde_yaml::Value) -> Option<String> {
+    match k {
+        serde_yaml::Value::String(s) => Some(s.clone()),
+        serde_yaml::Value::Number(n) => n.as_u64().map(|n| format!("{n:02}")),
+        _ => None,
     }
 }
 

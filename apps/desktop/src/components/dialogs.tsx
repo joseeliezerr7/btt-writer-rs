@@ -7,6 +7,7 @@ import { openPath, openUrl } from "@tauri-apps/plugin-opener";
 import { Archive, Check, Cloud, Database, Download, FileText, FileUp, FolderOpen, HardDriveDownload, Languages, Printer, RefreshCw, Server, Trash2, UploadCloud, UserPlus } from "lucide-react";
 import {
   api,
+  DEFAULT_PRINT,
   isTauri,
   resourceLabel,
   type CategoryRow,
@@ -554,13 +555,32 @@ export function ExportDialog({ project, onClose, onReview }: { project: ProjectI
   );
 }
 
-const PRINT_FONTS = ["Noto Serif", "Noto Sans", "Georgia", "Times New Roman", "Charis SIL", "Gentium Plus", "Andika", "Arial"];
+const PRINT_FONTS = ["Arial", "Calibri", "Noto Sans", "Andika", "Noto Serif", "Georgia", "Times New Roman", "Cambria", "Charis SIL", "Gentium Plus"];
+const PRINT_OPTS_KEY = "btt.printOptions";
+
+/** Opciones guardadas por el usuario sobre el formato predeterminado. */
+function loadPrintOptions(): PrintRequest {
+  try {
+    const raw = localStorage.getItem(PRINT_OPTS_KEY);
+    if (raw) return { ...DEFAULT_PRINT, ...(JSON.parse(raw) as Partial<PrintRequest>) };
+  } catch {
+    /* sin almacenamiento */
+  }
+  return { ...DEFAULT_PRINT };
+}
 
 export function PrintDialog({ id, isObs, onClose }: { id: string; isObs: boolean; onClose: () => void }) {
   const { t } = useT();
   const { settings } = useApp();
   const fb = useFeedback();
-  const [opts, setOpts] = useState<PrintRequest>({ include_incomplete: true, include_images: false, columns: 1, font_size_pt: 11, font_family: settings.translation_font });
+  const [opts, setOpts] = useState<PrintRequest>(loadPrintOptions);
+  useEffect(() => {
+    try {
+      localStorage.setItem(PRINT_OPTS_KEY, JSON.stringify(opts));
+    } catch {
+      /* sin almacenamiento */
+    }
+  }, [opts]);
   const [html, setHtml] = useState<string | null>(null);
   const [busy, setBusy] = useState<"open" | "print" | null>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -617,21 +637,53 @@ export function PrintDialog({ id, isObs, onClose }: { id: string; isObs: boolean
     >
       <div className="print-layout">
         <div className="print-options col">
-          <Field label={t("print.font")}>
-            <select className="select" value={opts.font_family} onChange={(e) => set({ font_family: e.target.value })}>
-              {[...new Set([settings.translation_font, ...PRINT_FONTS])].map((f) => <option key={f}>{f}</option>)}
-            </select>
-          </Field>
-          <Field label={t("print.font_size")}>
-            <select className="select" value={opts.font_size_pt} onChange={(e) => set({ font_size_pt: Number(e.target.value) })}>
-              {[9, 10, 11, 12, 13, 14, 16].map((n) => <option key={n} value={n}>{n} pt</option>)}
-            </select>
-          </Field>
-          <Field label={t("print.columns")}>
-            <Tabs segmented value={String(opts.columns)} onChange={(v) => set({ columns: v === "2" ? 2 : 1 })} tabs={[{ id: "1", label: t("print.one_column") }, { id: "2", label: t("print.two_columns") }]} />
-          </Field>
-          <Switch on={opts.include_incomplete} onChange={(v) => set({ include_incomplete: v })} label={t("print.incomplete")} />
-          {isObs && <Switch on={opts.include_images} onChange={(v) => set({ include_images: v })} label={t("print.images")} />}
+          <div className="print-group">
+            <h4>{t("print.content")}</h4>
+            <Switch on={opts.notes} onChange={(v) => set({ notes: v })} label={t("print.notes")} />
+            <Switch on={opts.words} onChange={(v) => set({ words: v })} label={t("print.words")} />
+            <Switch on={opts.include_incomplete} onChange={(v) => set({ include_incomplete: v })} label={t("print.incomplete")} />
+            {isObs && <Switch on={opts.include_images} onChange={(v) => set({ include_images: v })} label={t("print.images")} />}
+            <Switch on={opts.cover} onChange={(v) => set({ cover: v })} label={t("print.cover")} />
+            <Switch on={opts.toc} onChange={(v) => set({ toc: v })} label={t("print.toc")} />
+            <Switch on={opts.license} onChange={(v) => set({ license: v })} label={t("print.license")} />
+            <Switch on={opts.page_numbers} onChange={(v) => set({ page_numbers: v })} label={t("print.page_numbers")} />
+          </div>
+          <div className="print-group">
+            <h4>{t("print.format")}</h4>
+            <Field label={t("print.font")}>
+              <select className="select" value={opts.font_family} onChange={(e) => set({ font_family: e.target.value })}>
+                {[...new Set([...PRINT_FONTS, settings.translation_font, opts.font_family].filter(Boolean))].map((f) => <option key={f}>{f}</option>)}
+              </select>
+            </Field>
+            <div className="row">
+              <Field label={t("print.font_size")}>
+                <select className="select" value={opts.font_size_pt} onChange={(e) => set({ font_size_pt: Number(e.target.value) })}>
+                  {[9, 10, 11, 12, 13, 14, 16].map((n) => <option key={n} value={n}>{n} pt</option>)}
+                </select>
+              </Field>
+              <Field label={t("print.line_height")}>
+                <select className="select" value={opts.line_height} onChange={(e) => set({ line_height: Number(e.target.value) })}>
+                  {[1.15, 1.3, 1.5, 1.7, 2].map((n) => <option key={n} value={n}>{n}</option>)}
+                </select>
+              </Field>
+            </div>
+            <Field label={t("print.margins")}>
+              <select className="select" value={opts.margin_cm} onChange={(e) => set({ margin_cm: Number(e.target.value) })}>
+                {[1.5, 2, 2.5, 3].map((n) => <option key={n} value={n}>{n} cm</option>)}
+              </select>
+            </Field>
+            <Field label={t("print.columns")}>
+              <Tabs segmented value={String(opts.columns)} onChange={(v) => set({ columns: v === "2" ? 2 : 1 })} tabs={[{ id: "1", label: t("print.one_column") }, { id: "2", label: t("print.two_columns") }]} />
+            </Field>
+            <Field label={t("print.paragraphs")}>
+              <Tabs segmented value={opts.paragraphs} onChange={(v) => set({ paragraphs: v })} tabs={[{ id: "spaced", label: t("print.para_spaced") }, { id: "indent", label: t("print.para_indent") }]} />
+            </Field>
+            <Field label={t("print.heading")}>
+              <Tabs segmented value={opts.heading} onChange={(v) => set({ heading: v })} tabs={[{ id: "left", label: t("print.heading_left") }, { id: "centered", label: t("print.heading_centered") }]} />
+            </Field>
+            <Switch on={opts.verse_color} onChange={(v) => set({ verse_color: v })} label={t("print.verse_color")} />
+          </div>
+          <Button variant="ghost" onClick={() => setOpts({ ...DEFAULT_PRINT })}><RefreshCw size={14} /> {t("print.reset")}</Button>
           <p className="muted small" style={{ marginTop: ".4rem" }}>{t("print.hint")}</p>
         </div>
         <div className="print-preview">

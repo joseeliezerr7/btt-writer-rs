@@ -1185,24 +1185,78 @@ pub struct PrintRequest {
     font_size_pt: u32,
     #[serde(default)]
     font_family: String,
+    #[serde(default)]
+    cover: bool,
+    #[serde(default)]
+    license: bool,
+    #[serde(default)]
+    toc: bool,
+    #[serde(default = "yes")]
+    notes: bool,
+    #[serde(default = "yes")]
+    words: bool,
+    #[serde(default = "yes")]
+    page_numbers: bool,
+    #[serde(default)]
+    verse_color: bool,
+    #[serde(default)]
+    paragraphs: String,
+    #[serde(default)]
+    heading: String,
+    #[serde(default)]
+    margin_cm: f32,
+    #[serde(default)]
+    line_height: f32,
+}
+
+fn yes() -> bool {
+    true
 }
 
 fn print_html(st: &AppState, id: &str, req: &PrintRequest) -> R<String> {
+    use btt_core::print::{PrintOptions, PrintSources};
     let p = open_project(st, id)?;
     let m = &p.manifest;
-    let rc = m.source_translations.iter().find_map(|s| st.container(&s.language_id, &m.project.id, &s.resource_id).ok());
+    // Fuente: la primera traducción fuente descargada. Las notas y palabras van en su idioma.
+    let src = m.source_translations.iter().find_map(|s| st.container(&s.language_id, &m.project.id, &s.resource_id).ok().map(|rc| (s.language_id.clone(), rc)));
+    let (src_lang, rc) = match src {
+        Some((l, rc)) => (Some(l), Some(rc)),
+        None => (m.source_translations.first().map(|s| s.language_id.clone()), None),
+    };
+    let notes = match (&src_lang, req.notes) {
+        (Some(l), true) => st.container(l, &m.project.id, "tn").ok(),
+        _ => None,
+    };
+    let words = match (&src_lang, req.words) {
+        (Some(l), true) => st.container(l, "bible", "tw").ok(),
+        _ => None,
+    };
     let settings = st.settings.lock().unwrap().clone();
-    let font = if req.font_family.trim().is_empty() { settings.translation_font.clone() } else { req.font_family.clone() };
-    let opts = btt_core::print::PrintOptions {
+    let font = if req.font_family.trim().is_empty() { "Arial".to_string() } else { req.font_family.clone() };
+    let defaults = PrintOptions::default();
+    let opts = PrintOptions {
         include_incomplete: req.include_incomplete,
         include_images: req.include_images,
-        font_family: format!("'{font}', 'Noto Serif', Georgia, serif"),
-        font_size_pt: if req.font_size_pt == 0 { 11 } else { req.font_size_pt.clamp(7, 24) },
+        font_family: format!("'{font}', Arial, Helvetica, sans-serif"),
+        font_size_pt: if req.font_size_pt == 0 { defaults.font_size_pt } else { req.font_size_pt.clamp(7, 24) },
         images_base: String::new(),
         columns: if req.columns >= 2 { 2 } else { 1 },
         justify: true,
+        cover: req.cover,
+        license: req.license,
+        toc: req.toc,
+        notes: req.notes,
+        words: req.words,
+        page_numbers: req.page_numbers,
+        verse_color: req.verse_color,
+        paragraphs: if req.paragraphs.is_empty() { defaults.paragraphs } else { req.paragraphs.clone() },
+        heading: if req.heading.is_empty() { defaults.heading } else { req.heading.clone() },
+        margin_cm: if req.margin_cm <= 0.0 { defaults.margin_cm } else { req.margin_cm },
+        line_height: if req.line_height <= 0.0 { defaults.line_height } else { req.line_height },
+        lang: settings.ui_language.clone(),
     };
-    btt_core::print::render_html(&p, rc.as_deref(), &opts).map_err(err)
+    let sources = PrintSources { source: rc.as_deref(), notes: notes.as_deref(), words: words.as_deref() };
+    btt_core::print::render_document(&p, sources, &opts).map_err(err)
 }
 
 /// HTML del documento para la vista previa dentro de la app.

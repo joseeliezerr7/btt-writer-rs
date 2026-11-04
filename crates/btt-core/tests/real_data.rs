@@ -176,3 +176,30 @@ fn parses_real_conflicts_from_migrated_pech_acts() {
     eprintln!("chunks con conflicto: {conflicted}");
     assert!(conflicted > 0);
 }
+
+/// Imprime Hechos (pech) con las notas y palabras en español descargadas en este equipo.
+/// Escribe el HTML en `BTT_PRINT_OUT` si esa variable está definida, para revisarlo en un navegador.
+#[test]
+fn prints_real_pech_acts_with_notes_and_words() {
+    let root = home().join("BTT-Writer-3");
+    let project_dir = root.join("translations/pay_act_text_reg");
+    let containers = root.join("resource_containers");
+    if !project_dir.is_dir() || !containers.join("es-419_act_tn.tsrc").is_file() {
+        eprintln!("omitida: faltan datos reales");
+        return;
+    }
+    let p = Project::open(&project_dir).unwrap();
+    let source = ResourceContainer::open(&containers.join("es-419_act_ulb.tsrc")).unwrap();
+    let notes = ResourceContainer::open(&containers.join("es-419_act_tn.tsrc")).unwrap();
+    let words = ResourceContainer::open(&containers.join("es-419_bible_tw.tsrc")).unwrap();
+    let sources = btt_core::print::PrintSources { source: Some(&source), notes: Some(&notes), words: Some(&words) };
+    let html = btt_core::print::render_document(&p, sources, &btt_core::print::PrintOptions::default()).unwrap();
+    assert!(html.contains("class=\"helps\""), "sin notas de traducción");
+    assert!(html.contains("class=\"word\""), "sin palabras de traducción");
+    assert!(html.contains("<h2>Hechos Capítulo 1</h2>"), "título de capítulo");
+    assert!(html.contains("<div class=\"text\"><p class=\"p\"><sup class=\"v\">1</sup>"), "el capítulo debe empezar en el verso 1 sin el marcador \\c");
+    if let Ok(out) = std::env::var("BTT_PRINT_OUT") {
+        std::fs::write(&out, &html).unwrap();
+        eprintln!("escrito {out} ({} KB)", html.len() / 1024);
+    }
+}
