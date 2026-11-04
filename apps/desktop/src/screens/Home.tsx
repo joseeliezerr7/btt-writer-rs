@@ -1,11 +1,11 @@
 // Inicio: lista de proyectos, ordenación, menú de opciones y diálogos.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { AlertTriangle, Info, MoreVertical, Plus } from "lucide-react";
+import { AlertTriangle, Archive, BookOpen, CheckCircle2, Download, FolderInput, Info, Layers, LogOut, MessageSquare, MoreVertical, Plus, RefreshCw, Settings as SettingsIcon } from "lucide-react";
 import { api, isTauri, resourceLabel, type ProjectItem, type ProjectRow } from "../api";
 import { useApp } from "../app-context";
 import { formatDate, useT } from "../i18n";
-import { Button, ProgressRing, Spinner, useFeedback } from "../components/ui";
+import { Avatar, Button, EmptyState, Logo, Monogram, Spinner, Stat, useFeedback } from "../components/ui";
 import { BackupsDialog, bookName, FeedbackDialog, ImportDialog, MigrateDialog, NewProjectDialog, ProjectDetailsDialog, UpdateLibraryDialog } from "../components/dialogs";
 
 const BIBLE_ORDER = "gen exo lev num deu jos jdg rut 1sa 2sa 1ki 2ki 1ch 2ch ezr neh est job psa pro ecc sng isa jer lam ezk dan hos jol amo oba jon mic nam hab zep hag zec mal mat mrk luk jhn act rom 1co 2co gal eph php col 1th 2th 1ti 2ti tit phm heb jas 1pe 2pe 1jn 2jn 3jn jud rev".split(" ");
@@ -59,6 +59,16 @@ export default function HomeScreen() {
     return list;
   }, [projects, settings.sort_by, settings.book_order, books]);
 
+  const stats = useMemo(() => {
+    const all = projects ?? [];
+    return {
+      total: all.length,
+      finished: all.filter((p) => p.progress >= 1).length,
+      inProgress: all.filter((p) => p.progress > 0 && p.progress < 1).length,
+      conflicts: all.filter((p) => p.has_conflicts).length,
+    };
+  }, [projects]);
+
   const logout = async () => {
     await api.logout();
     setProfile(await api.getProfile());
@@ -71,26 +81,36 @@ export default function HomeScreen() {
   };
 
   const legacyRoots = (info?.legacy_roots ?? []).filter((r) => !settings.migrated_from.includes(r));
+  const userName = profile.full_name || profile.session?.user.username || "";
 
   return (
     <div className="screen">
       <div className="topbar">
-        <h1>{t("home.title")}</h1>
-        <span className="muted small">{t("profile.current_user")}: <strong>{profile.full_name || profile.session?.user.username}</strong></span>
+        <div className="brand">
+          <Logo size={30} />
+          <div>
+            <div className="name">{t("app.name")}</div>
+            <div className="sub">{t("home.brand_sub")}</div>
+          </div>
+        </div>
         <span className="grow" />
+        <span className="chip" title={t("profile.current_user")}>
+          <Avatar name={userName} size={24} />
+          <span className="ellipsis" style={{ maxWidth: 180 }}>{userName}</span>
+        </span>
         <Button variant="primary" onClick={() => setDialog("new")}><Plus size={16} /> {t("home.new")}</Button>
         <div style={{ position: "relative" }} ref={menuRef}>
           <Button variant="ghost" icon onClick={() => setMenu((m) => !m)} title={t("home.more")}><MoreVertical size={18} /></Button>
           {menu && (
             <div className="menu" onClick={() => setMenu(false)}>
-              <button onClick={() => setDialog("library")}>{t("home.update")}</button>
-              <button onClick={() => setDialog("import")}>{t("home.import")}</button>
-              <button onClick={() => setDialog("backups")}>{t("home.backups")}</button>
-              {legacyRoots.length > 0 && <button onClick={() => setDialog("migrate")}>{t("home.migrate")}</button>}
-              <button onClick={() => setDialog("feedback")}>{t("home.feedback")}</button>
+              <button onClick={() => setDialog("library")}><RefreshCw size={16} />{t("home.update")}</button>
+              <button onClick={() => setDialog("import")}><FolderInput size={16} />{t("home.import")}</button>
+              <button onClick={() => setDialog("backups")}><Archive size={16} />{t("home.backups")}</button>
+              {legacyRoots.length > 0 && <button onClick={() => setDialog("migrate")}><Download size={16} />{t("home.migrate")}</button>}
+              <button onClick={() => setDialog("feedback")}><MessageSquare size={16} />{t("home.feedback")}</button>
               <hr />
-              <button onClick={() => navigate({ name: "settings" })}>{t("home.settings")}</button>
-              <button onClick={logout}>{t("profile.logout")}</button>
+              <button onClick={() => navigate({ name: "settings" })}><SettingsIcon size={16} />{t("home.settings")}</button>
+              <button onClick={logout}><LogOut size={16} />{t("profile.logout")}</button>
             </div>
           )}
         </div>
@@ -101,63 +121,79 @@ export default function HomeScreen() {
           {projects === null ? (
             <Spinner />
           ) : projects.length === 0 ? (
-            <div className="welcome">
-              <div className="card">
-                <h2>{t("home.empty")}</h2>
-                <p className="muted">{t("home.empty_desc")}</p>
+            <div className="card elevated" style={{ marginTop: "2rem" }}>
+              <EmptyState icon={<BookOpen size={28} />} title={t("home.empty")} description={t("home.empty_desc")}>
                 <Button variant="primary" onClick={() => setDialog("new")}><Plus size={16} /> {t("home.new")}</Button>
-                {legacyRoots.length > 0 && <div style={{ marginTop: "1rem" }}><Button onClick={() => setDialog("migrate")}>{t("home.migrate")}</Button></div>}
-              </div>
+                <Button onClick={() => setDialog("import")}><FolderInput size={16} /> {t("home.import")}</Button>
+                {legacyRoots.length > 0 && <Button onClick={() => setDialog("migrate")}><Download size={16} /> {t("home.migrate")}</Button>}
+              </EmptyState>
             </div>
           ) : (
             <>
-              <div className="row wrap small muted" style={{ marginBottom: ".6rem" }}>
-                <span>{t("home.sort")}:</span>
-                <select className="select" style={{ width: "auto" }} value={settings.sort_by} onChange={(e) => updateSettings({ sort_by: e.target.value })}>
+              <div className="page-head">
+                <div>
+                  <h1>{t("home.title")}</h1>
+                  <p>{t("home.subtitle", { n: stats.total })}</p>
+                </div>
+              </div>
+
+              <div className="stats" style={{ marginBottom: "1.2rem" }}>
+                <Stat icon={<Layers size={20} />} value={stats.total} label={t("home.stats.projects")} />
+                <Stat icon={<BookOpen size={20} />} value={stats.inProgress} label={t("home.stats.in_progress")} tone="accent" />
+                <Stat icon={<CheckCircle2 size={20} />} value={stats.finished} label={t("home.stats.finished")} tone="success" />
+                {stats.conflicts > 0 && <Stat icon={<AlertTriangle size={20} />} value={stats.conflicts} label={t("home.stats.conflicts")} tone="danger" />}
+              </div>
+
+              <div className="toolbar">
+                <span className="small muted">{t("home.sort")}</span>
+                <select className="select" value={settings.sort_by} onChange={(e) => updateSettings({ sort_by: e.target.value })}>
                   <option value="project">{t("home.sort.project")}</option>
                   <option value="language">{t("home.sort.language")}</option>
                   <option value="progress">{t("home.sort.progress")}</option>
                 </select>
-                <select className="select" style={{ width: "auto" }} value={settings.book_order} onChange={(e) => updateSettings({ book_order: e.target.value })}>
+                <select className="select" value={settings.book_order} onChange={(e) => updateSettings({ book_order: e.target.value })}>
                   <option value="bible">{t("home.book_order")}</option>
                   <option value="alpha">{t("home.alpha_order")}</option>
                 </select>
               </div>
+
               <div className="card">
-                <table className="project-table">
-                  <thead>
-                    <tr>
-                      <th>{t("home.col.project")}</th>
-                      <th>{t("home.col.type")}</th>
-                      <th>{t("home.col.language")}</th>
-                      <th>{t("home.col.progress")}</th>
-                      <th></th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sorted.map((p) => (
-                      <tr key={p.id} onClick={() => openProject(p)}>
-                        <td>
-                          <strong>{bookName(p, books)}</strong>
-                          <div className="small muted">{p.id} · {formatDate(p.modified_at, lang, "")}</div>
-                        </td>
-                        <td>{resourceLabel(p, t)}</td>
-                        <td>
-                          <span className="target-text" style={{ fontSize: "1rem" }}>{p.language_name}</span> <span className="muted small">({p.language_id})</span>
-                        </td>
-                        <td>
-                          <div className="row">
-                            <ProgressRing value={p.progress} />
-                            {p.has_conflicts && <span title={t("home.conflicts")} className="badge danger"><AlertTriangle size={12} /></span>}
+                <div className="project-list-head">
+                  <span />
+                  <span>{t("home.col.project")}</span>
+                  <span>{t("home.col.type")}</span>
+                  <span>{t("home.col.language")}</span>
+                  <span>{t("home.col.progress")}</span>
+                  <span />
+                </div>
+                <div className="project-list">
+                  {sorted.map((p, i) => {
+                    const pct = Math.round(p.progress * 100);
+                    const idx = BIBLE_ORDER.indexOf(p.project_id);
+                    const hueKey = p.type_id !== "text" ? "helps-" + p.type_id : p.resource_id === "obs" ? "obs" : idx >= 0 && idx < 39 ? "ot" : "nt";
+                    return (
+                      <div key={p.id} className="project-row" onClick={() => openProject(p)} style={{ animationDelay: `${Math.min(i, 12) * 25}ms` }}>
+                        <Monogram text={p.project_id} hueKey={hueKey} />
+                        <div style={{ minWidth: 0 }}>
+                          <div className="name ellipsis">{bookName(p, books)}</div>
+                          <div className="meta ellipsis">{p.id} · {formatDate(p.modified_at, lang, "")}</div>
+                        </div>
+                        <div className="cell-type"><span className="badge">{resourceLabel(p, t)}</span></div>
+                        <div className="cell-lang lang ellipsis">{p.language_name}<span className="code">{p.language_id}</span></div>
+                        <div className="row" style={{ gap: ".6rem" }}>
+                          <div className="progress-inline">
+                            <div className="progress-bar thin"><div style={{ width: `${pct}%` }} /></div>
+                            <span className="pct" style={{ color: pct >= 100 ? "var(--success)" : undefined }}>{pct}%</span>
                           </div>
-                        </td>
-                        <td onClick={(e) => e.stopPropagation()}>
+                          {p.has_conflicts && <span title={t("home.conflicts")} className="badge danger"><AlertTriangle size={12} /></span>}
+                        </div>
+                        <div onClick={(e) => e.stopPropagation()}>
                           <Button variant="ghost" icon title={t("home.info")} onClick={() => setDetails(p)}><Info size={18} /></Button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
             </>
           )}

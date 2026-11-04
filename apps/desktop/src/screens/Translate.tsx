@@ -1,7 +1,7 @@
 // Pantalla de traducción: modos lectura / chunk / revisión, fuentes, recursos,
 // búsqueda, historial, conflictos y edición de ayudas (tN/tQ/tW).
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, BookOpen, CheckCheck, Eye, EyeOff, History, Home, LayoutList, ListChecks, Printer, Search, Settings as SettingsIcon, Upload, X } from "lucide-react";
+import { AlertTriangle, BookOpen, Check, CheckCheck, Eye, EyeOff, History, Home, LayoutList, ListChecks, Pencil, Plus, Printer, Search, Settings as SettingsIcon, Upload, X } from "lucide-react";
 import {
   api,
   type ChunkData,
@@ -15,7 +15,7 @@ import {
 } from "../api";
 import { useApp } from "../app-context";
 import { formatDate, useT } from "../i18n";
-import { Button, Dialog, SimpleMarkdown, Spinner, Switch, Tabs, useFeedback } from "../components/ui";
+import { Button, Dialog, Logo, SimpleMarkdown, Spinner, Switch, Tabs, useFeedback } from "../components/ui";
 import { bookName, ExportDialog, issueText, PrintDialog, SourceSelectionDialog } from "../components/dialogs";
 
 type Mode = "read" | "chunk" | "review";
@@ -80,35 +80,46 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
   return (
     <div className="translate">
       <aside className="sidebar">
-        <Button variant="ghost" icon title={t("translate.home")} onClick={() => navigate({ name: "home" })}><Home size={18} /><span>{t("translate.home")}</span></Button>
+        <Logo size={34} className="logo" />
+        <button className="nav-btn" title={t("translate.home")} onClick={() => navigate({ name: "home" })}><Home size={19} /><span>{t("translate.home")}</span></button>
+        <span className="sep" />
         {!isHelps && (
           <>
-            <Button icon className={mode === "read" ? "active" : ""} title={t("translate.read")} onClick={() => setMode("read")}><BookOpen size={18} /><span>{t("mode.read")}</span></Button>
-            <Button icon className={mode === "chunk" ? "active" : ""} title={t("translate.chunk")} onClick={() => setMode("chunk")}><LayoutList size={18} /><span>{t("mode.chunk")}</span></Button>
+            <button className={"nav-btn" + (mode === "read" ? " active" : "")} title={t("translate.read")} onClick={() => setMode("read")}><BookOpen size={19} /><span>{t("mode.read")}</span></button>
+            <button className={"nav-btn" + (mode === "chunk" ? " active" : "")} title={t("translate.chunk")} onClick={() => setMode("chunk")}><LayoutList size={19} /><span>{t("mode.chunk")}</span></button>
           </>
         )}
-        <Button icon className={mode === "review" ? "active" : ""} title={t("translate.review")} onClick={() => setMode("review")}><ListChecks size={18} /><span>{t("mode.review")}</span></Button>
-        {conflictCount > 0 && <Button icon variant="danger" title={t("home.conflicts")} onClick={() => { setMode("review"); const c = chapters.find((x) => x.chunks.some((k) => k.has_conflict)); if (c) { setChapter(c.id); setFocus(c.chunks.find((k) => k.has_conflict)?.id ?? null); } }}><AlertTriangle size={18} /><span>{conflictCount}</span></Button>}
+        <button className={"nav-btn" + (mode === "review" ? " active" : "")} title={t("translate.review")} onClick={() => setMode("review")}><ListChecks size={19} /><span>{t("mode.review")}</span></button>
+        {conflictCount > 0 && <button className="nav-btn danger" title={t("home.conflicts")} onClick={() => { setMode("review"); const c = chapters.find((x) => x.chunks.some((k) => k.has_conflict)); if (c) { setChapter(c.id); setFocus(c.chunks.find((k) => k.has_conflict)?.id ?? null); } }}><AlertTriangle size={19} /><span className="count">{conflictCount}</span></button>}
         <span className="grow" />
-        {!isHelps && <Button variant="ghost" icon title={t("translate.search")} onClick={() => setShowSearch((s) => !s)}><Search size={18} /></Button>}
-        <Button variant="ghost" icon title={t("translate.publish")} onClick={() => navigate({ name: "publish", id })}><CheckCheck size={18} /></Button>
-        <Button variant="ghost" icon title={t("translate.upload")} onClick={() => setShowExport(true)}><Upload size={18} /></Button>
-        {!isHelps && <Button variant="ghost" icon title={t("translate.print")} onClick={() => setShowPrint(true)}><Printer size={18} /></Button>}
-        <Button variant="ghost" icon title={t("home.settings")} onClick={() => navigate({ name: "settings" })}><SettingsIcon size={18} /></Button>
+        {!isHelps && <button className={"nav-btn" + (showSearch ? " active" : "")} title={t("translate.search")} onClick={() => setShowSearch((s) => !s)}><Search size={19} /><span>{t("common.search")}</span></button>}
+        <button className="nav-btn" title={t("translate.publish")} onClick={() => navigate({ name: "publish", id })}><CheckCheck size={19} /><span>{t("nav.publish")}</span></button>
+        <button className="nav-btn" title={t("translate.upload")} onClick={() => setShowExport(true)}><Upload size={19} /><span>{t("nav.upload")}</span></button>
+        {!isHelps && <button className="nav-btn" title={t("translate.print")} onClick={() => setShowPrint(true)}><Printer size={19} /><span>{t("translate.print")}</span></button>}
+        <button className="nav-btn" title={t("home.settings")} onClick={() => navigate({ name: "settings" })}><SettingsIcon size={19} /><span>{t("home.settings")}</span></button>
       </aside>
 
       <main className="main">
-        <div className="topbar" style={{ padding: ".4rem .8rem" }}>
-          <strong className="ellipsis">{bookLabel}</strong>
-          <span className="muted small">{detail.item.finished_chunks}/{detail.item.total_chunks} {t("translate.chunks_done")}</span>
+        <div className="topbar">
+          <div style={{ minWidth: 0 }}>
+            <div className="title ellipsis">{bookLabel}</div>
+            <div className="row" style={{ gap: ".5rem" }}>
+              <div className="progress-bar thin" style={{ width: 90 }}><div style={{ width: `${detail.item.total_chunks ? Math.round((detail.item.finished_chunks / detail.item.total_chunks) * 100) : 0}%` }} /></div>
+              <span className="muted small">{detail.item.finished_chunks}/{detail.item.total_chunks} {t("translate.chunks_done")}</span>
+            </div>
+          </div>
           <span className="grow" />
-          <div className="row" style={{ gap: ".2rem" }}>
-            {sources.map((s, i) => (
-              <button key={s.language_slug + s.slug} className={"tab" + (i === sourceIdx ? " active" : "")} onClick={() => setSourceIdx(i)} title={`${s.language_name} - ${s.name}`}>
-                {s.language_slug.toUpperCase()} {s.slug.toUpperCase()} {!s.downloaded && "⬇"}
-              </button>
-            ))}
-            <Button size="sm" onClick={() => setShowSources(true)}>{sources.length ? t("translate.add_source") : t("translate.edit_source")}</Button>
+          <div className="row" style={{ gap: ".4rem" }}>
+            {sources.length > 0 && (
+              <div className="source-tabs">
+                {sources.map((s, i) => (
+                  <button key={s.language_slug + s.slug} className={"tab" + (i === sourceIdx ? " active" : "")} onClick={() => setSourceIdx(i)} title={`${s.language_name} - ${s.name}`}>
+                    {s.language_slug.toUpperCase()} {s.slug.toUpperCase()} {!s.downloaded && "⬇"}
+                  </button>
+                ))}
+              </div>
+            )}
+            <Button size="sm" variant="ghost" onClick={() => setShowSources(true)}><Plus size={14} /> {sources.length ? t("translate.add_source") : t("translate.edit_source")}</Button>
           </div>
           {mode !== "read" && !isHelps && (
             <Button size="sm" variant={blind ? "primary" : "ghost"} title={t("translate.blind")} onClick={() => setBlind((b) => !b)}>{blind ? <EyeOff size={14} /> : <Eye size={14} />}</Button>
@@ -119,10 +130,11 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
         {showSearch && <SearchBar id={id} onPick={(ch, chunk) => { setChapter(ch); setFocus(chunk); setMode("review"); }} onClose={() => setShowSearch(false)} />}
 
         <div className="chapter-nav">
+          <span className="label">{t("translate.chapters")}</span>
           {chapters.map((c) => {
             const done = c.chunks.length > 0 && c.chunks.every((k) => k.finished);
             return (
-              <button key={c.id} className={"btn sm" + (c.id === chapter ? " active" : "") + (done ? " done" : "")} onClick={() => { setChapter(c.id); setFocus(null); }} title={c.title}>
+              <button key={c.id} className={(c.id === chapter ? "active" : "") + (done ? " done" : "")} onClick={() => { setChapter(c.id); setFocus(null); }} title={c.title}>
                 {chapterLabel(c.id)}
               </button>
             );
@@ -131,9 +143,12 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
 
         {!sourceReady && !isHelps ? (
           <div className="welcome">
-            <div className="card">
-              <h2>{t("translate.no_source")}</h2>
-              <Button variant="primary" onClick={() => setShowSources(true)}>{t("translate.edit_source")}</Button>
+            <div className="card elevated" style={{ padding: 0 }}>
+              <div className="empty">
+                <span className="icon-badge"><BookOpen size={28} /></span>
+                <h2>{t("translate.no_source")}</h2>
+                <Button variant="primary" onClick={() => setShowSources(true)}>{t("translate.edit_source")}</Button>
+              </div>
             </div>
           </div>
         ) : current ? (
@@ -268,14 +283,14 @@ function ChapterView(props: {
       <div className="cards">
         <div className="chunk-card">
           <div className="read-card">
-            <div className="pane-head"><span className="title">{t("translate.source")}</span> {source?.language_name} · {source?.name}</div>
+            <div className="pane-head"><span className="title">{t("translate.source")}</span><span className="grow" /><span className="ref">{source?.language_name} · {source?.name}</span></div>
             <h3>{chapter.id === "front" ? sourceTitle.book : sourceTitle.chapter || `${t("translate.chapter")} ${chapter.id.replace(/^0+/, "")}`}</h3>
             <div className="source-text">
               {chapter.id === "front" ? sourceTitle.book : sourceChunks.map((s) => <SourceText key={s.chunk} chunk={s} />)}
             </div>
           </div>
           <div className="read-card">
-            <div className="pane-head"><span className="title">{t("translate.target")}</span> {detail.manifest.target_language.name}</div>
+            <div className="pane-head"><span className="title">{t("translate.target")}</span><span className="grow" /><span className="ref">{detail.manifest.target_language.name}</span></div>
             <ReadTarget id={detail.item.id} chapter={chapter} rtl={props.rtl} />
             <div style={{ marginTop: "1rem" }}><Button variant="primary" onClick={props.onBegin}>{t("translate.begin")}</Button></div>
           </div>
@@ -492,7 +507,7 @@ function ChunkCard(props: {
     <div className={"chunk-card" + (showHelps ? " with-helps" : "")}>
       {/* Fuente */}
       <div className="pane">
-        <div className="pane-head"><span className="title">{title}</span><span className="grow" />{source ? `${source.language_slug} ${source.slug}` : ""}</div>
+        <div className="pane-head"><span className="title">{title}</span><span className="grow" />{source ? <span className="ref">{source.language_slug} {source.slug}</span> : null}</div>
         {props.blind && !props.review ? (
           <div className="muted" style={{ flex: 1, display: "grid", placeItems: "center" }}><EyeOff /> {t("translate.blind")}</div>
         ) : (
@@ -509,18 +524,18 @@ function ChunkCard(props: {
       <div className={"pane target" + (data?.finished ? " done" : "") + (data?.has_conflict ? " conflict" : "")}>
         <div className="pane-head">
           <span className="title">{t("translate.target")}</span>
-          {!saved && <span className="small muted">…</span>}
+          {!saved ? <span className="save-state"><span className="spinner" style={{ width: 10, height: 10, borderWidth: 2 }} /> {t("translate.saving")}</span> : data?.finished && !props.review ? <span className="badge ok"><Check size={11} /> {t("translate.done")}</span> : null}
           <span className="grow" />
           {data && !isTitle && !data.has_conflict && (
             props.review ? (
               <>
-                {!data.finished && <Button size="sm" variant={editing ? "primary" : "ghost"} onClick={() => (editing ? setEditing(false) : startEdit())}>{editing ? t("common.done") : "✎"}</Button>}
+                {!data.finished && <Button size="sm" variant={editing ? "primary" : "ghost"} icon={!editing} title={t("translate.chunk")} onClick={() => (editing ? setEditing(false) : startEdit())}>{editing ? t("common.done") : <Pencil size={14} />}</Button>}
                 {editing && !isHelps && <Button size="sm" variant="ghost" title={t("translate.add_footnote")} onClick={insertFootnote}>ƒ</Button>}
                 <Button size="sm" variant="ghost" icon title={t("translate.history")} onClick={openHistory}><History size={14} /></Button>
                 <Switch on={data.finished} onChange={toggleDone} label={<span className="small">{t("translate.done")}</span>} />
               </>
             ) : data.finished ? (
-              <Button size="sm" onClick={startEdit}>{t("translate.done")} ✓</Button>
+              <Button size="sm" variant="ghost" icon title={t("translate.chunk")} onClick={startEdit}><Pencil size={14} /></Button>
             ) : null
           )}
         </div>
@@ -529,7 +544,7 @@ function ChunkCard(props: {
           <Spinner />
         ) : data.has_conflict ? (
           <div className="col">
-            <strong className="small" style={{ color: "var(--danger)" }}>{t("translate.conflict_title")}</strong>
+            <strong className="small row" style={{ color: "var(--danger)" }}><AlertTriangle size={14} /> {t("translate.conflict_title")}</strong>
             {data.conflict_options.map((o, i) => (
               <div key={i} className="conflict-option" onClick={() => resolveConflict(o)} title={t("translate.keep")}>{o}</div>
             ))}
@@ -553,7 +568,7 @@ function ChunkCard(props: {
           </div>
         )}
         {data && data.issues.length > 0 && props.review && !isTitle && text && (
-          <div className="small" style={{ color: "var(--warning)", marginTop: ".4rem" }}>{data.issues.map((i) => issueText(t, i)).join(" ")}</div>
+          <div className="issue-text"><AlertTriangle size={14} style={{ marginTop: 2, flex: "none" }} /><span>{data.issues.map((i) => issueText(t, i)).join(" ")}</span></div>
         )}
       </div>
 

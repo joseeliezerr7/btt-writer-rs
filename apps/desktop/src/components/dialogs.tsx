@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import { Check, Download, Trash2 } from "lucide-react";
+import { Archive, Check, Cloud, Database, Download, FileText, FileUp, FolderOpen, HardDriveDownload, Languages, Printer, RefreshCw, Server, Trash2, UploadCloud, UserPlus } from "lucide-react";
 import {
   api,
   resourceLabel,
@@ -21,7 +21,7 @@ import {
 } from "../api";
 import { useApp } from "../app-context";
 import { formatDate, useT } from "../i18n";
-import { Button, Dialog, Field, Spinner, Switch, Tabs, useDebounced, useFeedback } from "./ui";
+import { Button, Dialog, Field, OptionItem, Spinner, Switch, Tabs, useDebounced, useFeedback } from "./ui";
 
 export function issueText(t: (k: string, v?: Record<string, string | number>) => string, i: Issue): string {
   return "verse" in i ? t(`issue.${i.kind}`, { verse: i.verse }) : t(`issue.${i.kind}`);
@@ -81,7 +81,7 @@ export function ContributorsEditor({ id, translators, onChange }: { id: string; 
           </div>
         </div>
       ) : (
-        <Button onClick={() => setAdding(true)}>{t("details.add_contributor")}</Button>
+        <Button onClick={() => setAdding(true)}><UserPlus size={16} /> {t("details.add_contributor")}</Button>
       )}
     </div>
   );
@@ -265,11 +265,11 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
 
   return (
     <Dialog title={t("new.title")} onClose={onClose} wide>
-      <div className="step-indicator">
-        <span className={step === "language" ? "cur" : ""}>1. {t("new.step.language")}</span> ›
-        <span className={step === "project" ? "cur" : ""}>2. {t("new.step.project")}</span>
-        {settings.gateway_language_mode && <> › <span className={step === "type" ? "cur" : ""}>3. {t("new.step.type")}</span></>}
-      </div>
+      <ol className="steps">
+        <li className={step === "language" ? "cur" : "done"}><span className="n">{step === "language" ? 1 : <Check size={13} />}</span>{t("new.step.language")}</li>
+        <li className={step === "project" ? "cur" : step === "type" ? "done" : ""}><span className="n">{step === "type" ? <Check size={13} /> : 2}</span>{t("new.step.project")}</li>
+        {settings.gateway_language_mode && <li className={step === "type" ? "cur" : ""}><span className="n">3</span>{t("new.step.type")}</li>}
+      </ol>
       {step === "language" && (
         <div className="col">
           <input className="input" placeholder={t("new.search_language")} value={langQuery} onChange={(e) => setLangQuery(e.target.value)} autoFocus />
@@ -526,28 +526,12 @@ export function ExportDialog({ project, onClose, onReview }: { project: ProjectI
     <Dialog title={t("export.title")} onClose={onClose}>
       <div className="col">
         <div className="card list">
-          <div className="list-item" onClick={upload}>
-            <div className="grow">
-              <strong>{t("export.upload")}</strong>
-              <div className="small muted">{t("export.upload_desc")} {profile.session ? `· ${profile.session.user.username}` : `· ${t("export.need_login")}`}</div>
-            </div>
-            {busy === "upload" && <span className="spinner" />}
-          </div>
+          <OptionItem icon={<UploadCloud size={18} />} title={t("export.upload")} description={`${t("export.upload_desc")} ${profile.session ? `· ${profile.session.user.username}` : `· ${t("export.need_login")}`}`} onClick={upload} busy={busy === "upload"} />
           {project.type_id === "text" && project.resource_id !== "obs" && (
-            <div className="list-item" onClick={() => run("usfm", async () => saved(await api.exportUsfm(project.id)))}>
-              <strong className="grow">{t("export.usfm")}</strong>
-              {busy === "usfm" && <span className="spinner" />}
-            </div>
+            <OptionItem icon={<FileText size={18} />} tone="accent" title={t("export.usfm")} onClick={() => run("usfm", async () => saved(await api.exportUsfm(project.id)))} busy={busy === "usfm"} />
           )}
-          {project.type_id === "text" && (
-            <div className="list-item" onClick={() => setShowPrint(true)}>
-              <strong className="grow">{t("export.pdf")}</strong>
-            </div>
-          )}
-          <div className="list-item" onClick={() => run("tstudio", async () => saved(await api.exportTstudio(project.id)))}>
-            <strong className="grow">{t("export.tstudio")}</strong>
-            {busy === "tstudio" && <span className="spinner" />}
-          </div>
+          {project.type_id === "text" && <OptionItem icon={<Printer size={18} />} tone="neutral" title={t("export.pdf")} onClick={() => setShowPrint(true)} />}
+          <OptionItem icon={<Archive size={18} />} tone="success" title={t("export.tstudio")} onClick={() => run("tstudio", async () => saved(await api.exportTstudio(project.id)))} busy={busy === "tstudio"} />
         </div>
         {login && (
           <div className="card pad col">
@@ -670,11 +654,11 @@ export function ImportDialog({ onClose, onImported }: { onClose: () => void; onI
         </div>
       ) : mode === "menu" ? (
         <div className="card list">
-          <div className="list-item" onClick={() => setMode("server")}><div className="grow"><strong>{t("import.server")}</strong><div className="small muted">{t("import.server_desc")}</div></div></div>
-          <div className="list-item" onClick={importFile}><strong className="grow">{t("import.file")}</strong></div>
-          <div className="list-item" onClick={() => setMode("usfm")}><strong className="grow">{t("import.usfm")}</strong></div>
-          <div className="list-item" onClick={importSource}><strong className="grow">{t("import.source")}</strong></div>
-          <div className="list-item" onClick={() => setMode("backups")}><strong className="grow">{t("import.backup")}</strong></div>
+          <OptionItem icon={<Cloud size={18} />} title={t("import.server")} description={t("import.server_desc")} onClick={() => setMode("server")} />
+          <OptionItem icon={<FolderOpen size={18} />} tone="accent" title={t("import.file")} description=".tstudio" onClick={importFile} />
+          <OptionItem icon={<FileUp size={18} />} tone="success" title={t("import.usfm")} description=".usfm · .sfm · .txt" onClick={() => setMode("usfm")} />
+          <OptionItem icon={<Database size={18} />} tone="neutral" title={t("import.source")} description=".tsrc" onClick={importSource} />
+          <OptionItem icon={<Archive size={18} />} tone="warning" title={t("import.backup")} onClick={() => setMode("backups")} />
         </div>
       ) : mode === "server" ? (
         <ServerImport glMode={settings.gateway_language_mode} onBack={() => setMode("menu")} run={(url) => withExists(async (m) => [await api.importFromWacs(url, m)])} />
@@ -869,13 +853,13 @@ export function UpdateLibraryDialog({ onClose }: { onClose: () => void }) {
   return (
     <Dialog title={t("library.title")} onClose={onClose}>
       <div className="card list">
-        <div className="list-item" onClick={() => run("sources", async () => t("library.result_sources", { n: (await api.updateCatalog()).length }))}><strong className="grow">{t("library.sources")}</strong>{busy === "sources" && <span className="spinner" />}</div>
-        <div className="list-item" onClick={() => setDownloads(true)}><strong className="grow">{t("library.download_sources")}</strong></div>
-        <div className="list-item" onClick={() => run("langs", async () => t("library.result_languages", { n: await api.updateLanguages() }))}><strong className="grow">{t("library.languages")}</strong>{busy === "langs" && <span className="spinner" />}</div>
-        <div className="list-item" onClick={() => run("index", async () => { await api.downloadIndex(); return t("common.done"); })}><strong className="grow">{t("library.index_download")}</strong>{busy === "index" && <span className="spinner" />}</div>
-        <div className="list-item" onClick={importIndex}><strong className="grow">{t("library.index_file")}</strong>{busy === "index_file" && <span className="spinner" />}</div>
+        <OptionItem icon={<RefreshCw size={18} />} title={t("library.sources")} onClick={() => run("sources", async () => t("library.result_sources", { n: (await api.updateCatalog()).length }))} busy={busy === "sources"} />
+        <OptionItem icon={<HardDriveDownload size={18} />} tone="success" title={t("library.download_sources")} onClick={() => setDownloads(true)} />
+        <OptionItem icon={<Languages size={18} />} tone="accent" title={t("library.languages")} onClick={() => run("langs", async () => t("library.result_languages", { n: await api.updateLanguages() }))} busy={busy === "langs"} />
+        <OptionItem icon={<Server size={18} />} tone="neutral" title={t("library.index_download")} onClick={() => run("index", async () => { await api.downloadIndex(); return t("common.done"); })} busy={busy === "index"} />
+        <OptionItem icon={<Database size={18} />} tone="neutral" title={t("library.index_file")} onClick={importIndex} busy={busy === "index_file"} />
       </div>
-      {msg && <p style={{ marginTop: "1rem" }} className="badge ok">{msg}</p>}
+      {msg && <p style={{ marginTop: "1rem" }} className="badge ok"><Check size={13} /> {msg}</p>}
       {downloads && <DownloadSourcesDialog onClose={() => setDownloads(false)} />}
     </Dialog>
   );
@@ -1041,7 +1025,7 @@ export function MigrateDialog({ roots, onClose, onDone }: { roots: string[]; onC
     <Dialog title={t("migrate.title")} onClose={onClose}>
       <p>{t("migrate.desc")}</p>
       <div className="card list">
-        {roots.map((r) => <div key={r} className="list-item"><code className="grow ellipsis small">{r}</code><Button size="sm" variant="primary" busy={busy === r} onClick={() => go(r)}>{t("migrate.start")}</Button></div>)}
+        {roots.map((r) => <div key={r} className="list-item"><Download size={16} className="muted" /><code className="grow ellipsis small">{r}</code><Button size="sm" variant="primary" busy={busy === r} onClick={() => go(r)}>{t("migrate.start")}</Button></div>)}
       </div>
     </Dialog>
   );

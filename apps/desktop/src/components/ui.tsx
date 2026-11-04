@@ -1,8 +1,8 @@
 // Componentes de interfaz reutilizables.
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { X } from "lucide-react";
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from "react";
+import { AlertCircle, CheckCircle2, ChevronRight, Info, X } from "lucide-react";
 
-type Variant = "primary" | "danger" | "ghost" | "default";
+type Variant = "primary" | "danger" | "ghost" | "soft" | "default";
 
 export function Button(props: {
   children?: ReactNode;
@@ -19,7 +19,7 @@ export function Button(props: {
 }) {
   const cls = ["btn", props.variant && props.variant !== "default" ? props.variant : "", props.size ?? "", props.icon ? "icon" : "", props.block ? "block" : "", props.className ?? ""].join(" ");
   return (
-    <button type={props.type ?? "button"} className={cls} onClick={props.onClick} disabled={props.disabled || props.busy} title={props.title}>
+    <button type={props.type ?? "button"} className={cls} onClick={props.onClick} disabled={props.disabled || props.busy} title={props.title} aria-busy={props.busy || undefined}>
       {props.busy ? <span className="spinner" style={{ width: 16, height: 16, borderWidth: 2 }} /> : null}
       {props.children}
     </button>
@@ -87,9 +87,9 @@ export function Dialog(props: {
   );
 }
 
-export function Tabs<T extends string>(props: { tabs: { id: T; label: ReactNode }[]; value: T; onChange: (t: T) => void }) {
+export function Tabs<T extends string>(props: { tabs: { id: T; label: ReactNode }[]; value: T; onChange: (t: T) => void; segmented?: boolean }) {
   return (
-    <div className="tabs" role="tablist">
+    <div className={"tabs" + (props.segmented ? " segmented" : "")} role="tablist">
       {props.tabs.map((t) => (
         <button key={t.id} role="tab" className={"tab" + (t.id === props.value ? " active" : "")} onClick={() => props.onChange(t.id)}>
           {t.label}
@@ -105,6 +105,82 @@ export function ProgressRing({ value }: { value: number }) {
     <div className="progress-ring" style={{ ["--p" as string]: p }}>
       <span>{p}%</span>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------- marca y elementos visuales
+
+/** Isotipo de la app: libro abierto sobre un degradado. */
+export function Logo({ size = 32, className }: { size?: number; className?: string }) {
+  const id = useId().replace(/:/g, "");
+  return (
+    <svg className={"logo " + (className ?? "")} width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
+      <defs>
+        <linearGradient id={`g${id}`} x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0" stopColor="#2a93c0" />
+          <stop offset="1" stopColor="#0b4f70" />
+        </linearGradient>
+      </defs>
+      <rect width="48" height="48" rx="13" fill={`url(#g${id})`} />
+      <path d="M11 15.2c3.9-1.9 7.9-1.8 12 .6v18.4c-4.1-2.4-8.1-2.5-12-.6z" fill="#fff" opacity=".95" />
+      <path d="M37 15.2c-3.9-1.9-7.9-1.8-12 .6v18.4c4.1-2.4 8.1-2.5 12-.6z" fill="#fff" opacity=".7" />
+      <path d="M23 15.8v18.4" stroke="#0b4f70" strokeWidth="1.2" opacity=".5" />
+      <path d="M31.5 12.5l4 4-7.5 7.5-4-4z" fill="#f2c15c" />
+    </svg>
+  );
+}
+
+const hue = (s: string) => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) % 360; return h; };
+
+/** Avatar con iniciales y color estable derivado del nombre. */
+export function Avatar({ name, size = 32 }: { name: string; size?: number }) {
+  const initials = name.trim().split(/\s+/).slice(0, 2).map((w) => w[0]?.toUpperCase() ?? "").join("") || "?";
+  return <span className="avatar" style={{ ["--h" as string]: hue(name), width: size, height: size, fontSize: size * 0.38 }}>{initials}</span>;
+}
+
+/** Monograma de libro (abreviatura) con color por tono. */
+export function Monogram({ text, hueKey }: { text: string; hueKey: string }) {
+  return <span className="monogram" style={{ ["--h" as string]: hue(hueKey) }}>{text.slice(0, 3)}</span>;
+}
+
+export function IconBadge({ children, tone, size }: { children: ReactNode; tone?: "accent" | "success" | "warning" | "danger" | "neutral"; size?: "lg" }) {
+  return <span className={["icon-badge", tone ?? "", size ?? ""].join(" ")}>{children}</span>;
+}
+
+export function EmptyState(props: { icon: ReactNode; title: ReactNode; description?: ReactNode; children?: ReactNode; tone?: "accent" | "success" | "warning" | "danger" | "neutral" }) {
+  return (
+    <div className="empty">
+      <IconBadge tone={props.tone}>{props.icon}</IconBadge>
+      <h2>{props.title}</h2>
+      {props.description ? <p>{props.description}</p> : null}
+      {props.children ? <div className="row wrap" style={{ justifyContent: "center" }}>{props.children}</div> : null}
+    </div>
+  );
+}
+
+export function Stat({ label, value, icon, tone }: { label: ReactNode; value: ReactNode; icon: ReactNode; tone?: "accent" | "success" | "warning" | "danger" | "neutral" }) {
+  return (
+    <div className="card stat">
+      <IconBadge tone={tone}>{icon}</IconBadge>
+      <div>
+        <div className="value">{value}</div>
+        <div className="label">{label}</div>
+      </div>
+    </div>
+  );
+}
+
+/** Fila de opción con icono, título y descripción (menús de acciones). */
+export function OptionItem(props: { icon: ReactNode; title: ReactNode; description?: ReactNode; onClick?: () => void; right?: ReactNode; disabled?: boolean; busy?: boolean; tone?: "accent" | "success" | "warning" | "danger" | "neutral" }) {
+  return (
+    <button type="button" className="option-item" onClick={props.onClick} disabled={props.disabled || props.busy}>
+      <IconBadge tone={props.tone}>{props.icon}</IconBadge>
+      <span className="option-text">
+        <strong>{props.title}</strong>
+        {props.description ? <span>{props.description}</span> : null}
+      </span>
+      {props.busy ? <span className="spinner" style={{ width: 18, height: 18, borderWidth: 2 }} /> : props.right ?? <ChevronRight size={16} className="chev" />}
+    </button>
   );
 }
 
@@ -178,7 +254,8 @@ export function FeedbackProvider({ children, labels }: { children: ReactNode; la
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => (
           <div key={t.id} className={"toast " + (t.kind === "info" ? "" : t.kind)}>
-            {t.text}
+            {t.kind === "error" ? <AlertCircle size={18} /> : t.kind === "success" ? <CheckCircle2 size={18} /> : <Info size={18} />}
+            <span>{t.text}</span>
           </div>
         ))}
       </div>

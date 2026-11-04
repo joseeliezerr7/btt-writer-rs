@@ -1,11 +1,11 @@
 // Pantalla de perfil: cuenta del servidor, cuenta sin conexión y términos de uso.
 import { useState } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { Cloud, UserPlus, UserRound } from "lucide-react";
+import { ArrowRight, Cloud, Settings as SettingsIcon, UserPlus, UserRound } from "lucide-react";
 import { api } from "../api";
 import { useApp } from "../app-context";
 import { useT } from "../i18n";
-import { Button, Dialog, Field, useFeedback } from "../components/ui";
+import { Button, Dialog, Field, IconBadge, Logo, useFeedback } from "../components/ui";
 
 type Step = "index" | "online" | "offline" | "privacy" | "terms";
 
@@ -52,67 +52,85 @@ export default function ProfileScreen() {
   };
 
   return (
-    <div className="screen">
-      <div className="topbar">
-        <h1>{t("app.name")}</h1>
+    <div className="screen auth">
+      <div className="topbar" style={{ background: "transparent", borderBottom: 0, backdropFilter: "none" }}>
+        <div className="brand">
+          <Logo size={28} />
+          <div className="name">{t("app.name")}</div>
+        </div>
         <span className="grow" />
         <Button variant="ghost" onClick={() => navigate({ name: "settings" })}>
-          {t("home.settings")}
+          <SettingsIcon size={16} /> {t("home.settings")}
         </Button>
       </div>
       <div className="content">
-        <div className="container" style={{ maxWidth: 820, paddingTop: "2rem" }}>
+        <div className="container col" style={{ maxWidth: 900, alignItems: "center", width: "100%" }}>
           {step === "index" && (
             <>
-              <h2 className="center">{t("profile.title")}</h2>
-              <div className="profile-options" style={{ marginTop: "1.5rem" }}>
-                <div className="card" onClick={() => setStep("online")}>
-                  <Cloud size={28} />
+              <div className="auth-hero">
+                <Logo size={64} className="logo" />
+                <h1>{t("app.welcome")}</h1>
+                <p>{t("profile.tagline")}</p>
+              </div>
+              <p className="eyebrow" style={{ marginBottom: ".8rem" }}>{t("profile.choose")}</p>
+              <div className="profile-options">
+                <button type="button" className="option-card" onClick={() => setStep("online")}>
+                  <IconBadge size="lg"><Cloud size={24} /></IconBadge>
                   <h3>{t("profile.login_server")}</h3>
-                  <p className="muted small">{t("profile.login_server_desc")}</p>
-                </div>
-                <div className="card" onClick={() => openUrl(settings.create_account_url)}>
-                  <UserPlus size={28} />
+                  <p>{t("profile.login_server_desc")}</p>
+                  <span className="go">{t("common.continue")} <ArrowRight size={14} /></span>
+                </button>
+                <button type="button" className="option-card" onClick={() => openUrl(settings.create_account_url)}>
+                  <IconBadge size="lg" tone="accent"><UserPlus size={24} /></IconBadge>
                   <h3>{t("profile.create_server")}</h3>
-                  <p className="muted small">{t("profile.create_server_desc")}</p>
-                </div>
-                <div className="card" onClick={() => setStep("offline")}>
-                  <UserRound size={28} />
+                  <p>{t("profile.create_server_desc")}</p>
+                  <span className="go">{t("common.open")} <ArrowRight size={14} /></span>
+                </button>
+                <button type="button" className="option-card" onClick={() => setStep("offline")}>
+                  <IconBadge size="lg" tone="success"><UserRound size={24} /></IconBadge>
                   <h3>{t("profile.offline")}</h3>
-                  <p className="muted small">{t("profile.offline_desc")}</p>
-                </div>
+                  <p>{t("profile.offline_desc")}</p>
+                  <span className="go">{t("common.continue")} <ArrowRight size={14} /></span>
+                </button>
               </div>
             </>
           )}
 
           {step === "online" && (
-            <div className="card pad col" style={{ maxWidth: 460, margin: "0 auto" }}>
-              <h2>{t("profile.login_server")}</h2>
+            <div className="card elevated auth-card col">
+              <div className="row" style={{ gap: ".8rem", marginBottom: ".4rem" }}>
+                <IconBadge><Cloud size={20} /></IconBadge>
+                <h2 style={{ margin: 0 }}>{t("profile.login_server")}</h2>
+              </div>
+              <p className="muted small" style={{ marginTop: 0 }}>{t("profile.login_server_desc")}</p>
               <Field label={t("profile.username")}>
-                <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
+                <input className="input" value={username} onChange={(e) => setUsername(e.target.value)} autoFocus autoComplete="username" />
               </Field>
               <Field label={t("profile.password")}>
-                <input className="input" type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && loginOnline()} />
+                <input className="input" type="password" value={password} autoComplete="current-password" onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && loginOnline()} />
               </Field>
-              <div className="row" style={{ justifyContent: "flex-end" }}>
-                <Button onClick={() => setStep("index")}>{t("common.cancel")}</Button>
+              <div className="row" style={{ justifyContent: "flex-end", marginTop: ".4rem" }}>
+                <Button variant="ghost" onClick={() => setStep("index")}>{t("common.cancel")}</Button>
                 <Button variant="primary" busy={busy} disabled={!username || !password} onClick={loginOnline}>
-                  {t("common.continue")}
+                  {t("common.continue")} <ArrowRight size={16} />
                 </Button>
               </div>
             </div>
           )}
 
           {step === "offline" && (
-            <div className="card pad col" style={{ maxWidth: 460, margin: "0 auto" }}>
-              <h2>{t("profile.offline")}</h2>
+            <div className="card elevated auth-card col">
+              <div className="row" style={{ gap: ".8rem", marginBottom: ".4rem" }}>
+                <IconBadge tone="success"><UserRound size={20} /></IconBadge>
+                <h2 style={{ margin: 0 }}>{t("profile.offline")}</h2>
+              </div>
               <Field label={t("profile.name")} hint={t("profile.name_public")}>
                 <input className="input" value={name} onChange={(e) => setName(e.target.value)} autoFocus onKeyDown={(e) => e.key === "Enter" && name.trim() && offlineContinue()} />
               </Field>
-              <div className="row" style={{ justifyContent: "flex-end" }}>
-                <Button onClick={() => setStep("index")}>{t("common.cancel")}</Button>
+              <div className="row" style={{ justifyContent: "flex-end", marginTop: ".4rem" }}>
+                <Button variant="ghost" onClick={() => setStep("index")}>{t("common.cancel")}</Button>
                 <Button variant="primary" disabled={!name.trim()} onClick={offlineContinue}>
-                  {t("common.continue")}
+                  {t("common.continue")} <ArrowRight size={16} />
                 </Button>
               </div>
             </div>
@@ -120,7 +138,7 @@ export default function ProfileScreen() {
 
           {step === "privacy" && (
             <Dialog title={t("profile.privacy_title")} narrow footer={<>
-              <Button onClick={() => setStep("index")}>{t("common.cancel")}</Button>
+              <Button variant="ghost" onClick={() => setStep("index")}>{t("common.cancel")}</Button>
               <Button variant="primary" onClick={() => setStep("terms")}>{t("common.continue")}</Button>
             </>}>
               <p>{t("profile.privacy_body")}</p>
@@ -128,16 +146,16 @@ export default function ProfileScreen() {
           )}
 
           {step === "terms" && (
-            <div className="card pad col" style={{ maxWidth: 640, margin: "0 auto" }}>
+            <div className="card elevated auth-card wide col">
               <h2>{t("profile.terms_title")}</h2>
               <p>{t("profile.terms_body")}</p>
-              <div className="row wrap">
+              <div className="legal-links">
                 <Button size="sm" onClick={() => setLegal("license")}>{t("profile.license")}</Button>
                 <Button size="sm" onClick={() => setLegal("guidelines")}>{t("profile.guidelines")}</Button>
                 <Button size="sm" onClick={() => setLegal("faith")}>{t("profile.faith")}</Button>
               </div>
-              <div className="row" style={{ justifyContent: "flex-end", marginTop: ".5rem" }}>
-                <Button onClick={decline}>{t("profile.no_thanks")}</Button>
+              <div className="row" style={{ justifyContent: "flex-end", marginTop: ".3rem" }}>
+                <Button variant="ghost" onClick={decline}>{t("profile.no_thanks")}</Button>
                 <Button variant="primary" onClick={agree}>{t("profile.agree")}</Button>
               </div>
             </div>
