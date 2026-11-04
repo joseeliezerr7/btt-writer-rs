@@ -46,6 +46,10 @@ cd apps/desktop && npm run tauri build
 .\scripts\tauri.cmd build     # deja los instaladores en %USERPROFILE%\.cargo-target\btt-writer-rs\release\bundle\{msi,nsis}
 eleaseundle\{msi,nsis}
 
+# macOS/Linux (no se pueden generar desde Windows): el flujo .github/workflows/release.yml
+# compila DMG universal, MSI/NSIS y DEB/RPM/AppImage en GitHub Actions al publicar una etiqueta:
+#   git tag v3.0.0 && git push origin main --tags   (o a mano desde la pestaña Actions)
+
 # Android (una vez: npm run tauri android init)
 cd apps/desktop && npm run tauri android dev
 ```
