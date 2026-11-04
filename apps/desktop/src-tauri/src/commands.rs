@@ -2,6 +2,7 @@
 //! que el frontend muestre el mensaje de error tal cual.
 
 use crate::AppState;
+use tauri::Manager;
 use btt_core::appdata::{Profile, Settings};
 use btt_core::gitrepo::{self, Credentials, MergeStatus, PushStatus};
 use btt_core::library::{CategoryRow, ProjectRow, ResourceRow, TargetLanguageRow};
@@ -17,6 +18,18 @@ use std::path::{Path, PathBuf};
 use tauri::State;
 
 type R<T> = Result<T, String>;
+
+/// Ejecuta trabajo bloqueante (HTTP con reqwest::blocking, git) en un hilo aparte.
+/// Los comandos `async` corren en el runtime de Tauri y un cliente bloqueante ahí
+/// aborta con "Cannot start a runtime from within a runtime".
+async fn blocking<T: Send + 'static>(app: tauri::AppHandle, f: impl FnOnce(&AppState) -> R<T> + Send + 'static) -> R<T> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let st = app.state::<AppState>();
+        f(&st)
+    })
+    .await
+    .map_err(|e| format!("la tarea se interrumpió: {e}"))?
+}
 
 fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
@@ -95,7 +108,11 @@ fn logout(st: State<AppState>) -> R<()> {
 }
 
 #[tauri::command]
-fn wacs_login(st: State<AppState>, username: String, password: String) -> R<Profile> {
+async fn wacs_login(app: tauri::AppHandle, username: String, password: String) -> R<Profile> {
+    blocking(app, move |st| wacs_login_inner(st, &username, &password)).await
+}
+
+fn wacs_login_inner(st: &AppState, username: &str, password: &str) -> R<Profile> {
     let api = st.settings.lock().unwrap().git_api_url.clone();
     let client = WacsClient::new(&api).map_err(err)?;
     let session = client
@@ -839,7 +856,8 @@ fn source_languages(st: State<AppState>) -> R<Vec<btt_core::library::SourceLangu
 }
 
 #[tauri::command]
-async fn download_source(st: State<'_, AppState>, language: String, project: String, resource: String) -> R<Vec<String>> {
+async fn download_source(app: tauri::AppHandle, language: String, project: String, resource: String) -> R<Vec<String>> {
+    blocking(app, move |st| {
     let row = st
         .library
         .lock()
@@ -853,6 +871,7 @@ async fn download_source(st: State<'_, AppState>, language: String, project: Str
     drop(lib);
     st.clear_rc_cache();
     r
+}).await
 }
 
 #[tauri::command]
@@ -863,15 +882,18 @@ fn delete_source(st: State<AppState>, language: String, project: String, resourc
 }
 
 #[tauri::command]
-async fn update_catalog(st: State<'_, AppState>) -> R<Vec<String>> {
+async fn update_catalog(app: tauri::AppHandle) -> R<Vec<String>> {
+    blocking(app, move |st| {
     let url = st.settings.lock().unwrap().root_catalog_url();
     let client = btt_core::sources::http_client().map_err(err)?;
     let lib = st.library.lock().unwrap();
     btt_core::sources::update_catalog(&lib, &client, &url).map_err(err)
+}).await
 }
 
 #[tauri::command]
-async fn update_languages(st: State<'_, AppState>) -> R<usize> {
+async fn update_languages(app: tauri::AppHandle) -> R<usize> {
+    blocking(app, move |st| {
     let url = st.settings.lock().unwrap().langnames_url.clone();
     let client = btt_core::sources::http_client().map_err(err)?;
     let lib = st.library.lock().unwrap();
@@ -883,10 +905,12 @@ async fn update_languages(st: State<'_, AppState>) -> R<usize> {
         Some("https://td.unfoldingword.org/api/templanguages/assignment/changed/"),
     )
     .map_err(err)
+}).await
 }
 
 #[tauri::command]
-async fn download_index(st: State<'_, AppState>) -> R<()> {
+async fn download_index(app: tauri::AppHandle) -> R<()> {
+    blocking(app, move |st| {
     let url = st.settings.lock().unwrap().index_sqlite_url.clone();
     let client = btt_core::sources::http_client().map_err(err)?;
     let resp = client.get(&url).send().map_err(err)?;
@@ -897,7 +921,8 @@ async fn download_index(st: State<'_, AppState>) -> R<()> {
     if bytes.len() < 1024 || !bytes.starts_with(b"SQLite format 3") {
         return Err("el archivo descargado no es un index.sqlite válido".into());
     }
-    replace_index(&st, &bytes)
+    replace_index(st, &bytes)
+}).await
 }
 
 #[tauri::command]
@@ -1121,9 +1146,10 @@ fn credentials(st: &AppState) -> R<(Credentials, String)> {
 }
 
 #[tauri::command]
-async fn upload_project(st: State<'_, AppState>, id: String) -> R<UploadResult> {
-    let p = open_project(&st, &id)?;
-    let (creds, username) = credentials(&st)?;
+async fn upload_project(app: tauri::AppHandle, id: String) -> R<UploadResult> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
+    let (creds, username) = credentials(st)?;
     let settings = st.settings.lock().unwrap().clone();
     let client = WacsClient::new(&settings.git_api_url).map_err(err)?;
     let repo = client.create_repo(&creds.token, &username, &id).map_err(|e| match e {
@@ -1149,12 +1175,14 @@ async fn upload_project(st: State<'_, AppState>, id: String) -> R<UploadResult> 
         push,
         merge: Some(merge),
     })
+}).await
 }
 
 #[tauri::command]
-async fn pull_project(st: State<'_, AppState>, id: String) -> R<MergeStatus> {
-    let p = open_project(&st, &id)?;
-    let (creds, username) = credentials(&st)?;
+async fn pull_project(app: tauri::AppHandle, id: String) -> R<MergeStatus> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
+    let (creds, username) = credentials(st)?;
     let api = st.settings.lock().unwrap().git_api_url.clone();
     let client = WacsClient::new(&api).map_err(err)?;
     let repo = client.get_repo(Some(&creds.token), &username, &id).map_err(|e| match e {
@@ -1162,6 +1190,7 @@ async fn pull_project(st: State<'_, AppState>, id: String) -> R<MergeStatus> {
         other => other.to_string(),
     })?;
     gitrepo::pull(&p.root, &repo.clone_url, Some(&creds), &st.author()).map_err(err)
+}).await
 }
 
 #[tauri::command]
@@ -1171,7 +1200,8 @@ fn restore_backup_branch(st: State<AppState>, id: String) -> R<()> {
 }
 
 #[tauri::command]
-async fn search_wacs(st: State<'_, AppState>, username: String, query: String) -> R<Vec<Repo>> {
+async fn search_wacs(app: tauri::AppHandle, username: String, query: String) -> R<Vec<Repo>> {
+    blocking(app, move |st| {
     let api = st.settings.lock().unwrap().git_api_url.clone();
     let client = WacsClient::new(&api).map_err(err)?;
     if username.trim().is_empty() {
@@ -1179,16 +1209,19 @@ async fn search_wacs(st: State<'_, AppState>, username: String, query: String) -
     } else {
         client.user_repos(username.trim(), &query).map_err(err)
     }
+}).await
 }
 
 #[tauri::command]
-async fn import_from_wacs(st: State<'_, AppState>, clone_url: String, mode: ImportMode) -> R<ImportOutcome> {
+async fn import_from_wacs(app: tauri::AppHandle, clone_url: String, mode: ImportMode) -> R<ImportOutcome> {
+    blocking(app, move |st| {
     let creds = st.profile.lock().unwrap().session.as_ref().map(|s| Credentials { username: s.user.username.clone(), token: s.token.sha1.clone() });
     let staging = st.paths.temp().join(format!("clone-{}", uuid_simple()));
     gitrepo::clone(&clone_url, creds.as_ref(), &staging).map_err(err)?;
     let outcome = btt_core::tstudio::import_dir(&staging, &st.paths.translations(), mode, &st.author());
     let _ = btt_core::project::remove_dir_all_robust(&staging);
     Ok(outcome)
+}).await
 }
 
 // ------------------------------------------------------------------ respaldos / migración
@@ -1315,4 +1348,21 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool {
         send_feedback,
         open_data_dir,
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    /// El cliente HTTP bloqueante no puede crearse dentro del runtime async
+    /// (era la causa de que descargar fuentes no hiciera nada); en `spawn_blocking` sí.
+    #[test]
+    fn cliente_bloqueante_fuera_del_runtime() {
+        let dentro = std::panic::catch_unwind(|| {
+            tauri::async_runtime::block_on(async { btt_core::sources::http_client().map(|_| ()).is_ok() })
+        });
+        assert!(!matches!(dentro, Ok(true)), "se esperaba que fallara o abortara dentro del runtime");
+        let fuera = tauri::async_runtime::block_on(async {
+            tauri::async_runtime::spawn_blocking(|| btt_core::sources::http_client().map(|_| ())).await
+        });
+        assert!(matches!(fuera, Ok(Ok(()))), "{fuera:?}");
+    }
 }
