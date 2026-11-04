@@ -1164,24 +1164,51 @@ async fn export_usfm(app: tauri::AppHandle, id: String, dest: String) -> R<Strin
 }
 
 #[tauri::command]
-async fn export_print_html(app: tauri::AppHandle, id: String, include_incomplete: bool, include_images: bool) -> R<String> {
+async fn export_print_html(app: tauri::AppHandle, id: String, opts: PrintRequest) -> R<String> {
     blocking(app, move |st| {
-    let p = open_project(st, &id)?;
+        let html = print_html(st, &id, &opts)?;
+        let dest = st.paths.exports().join(format!("{id}.html"));
+        btt_core::project::atomic_write(&dest, &html).map_err(err)?;
+        Ok(dest.display().to_string())
+    })
+    .await
+}
+
+/// Opciones de impresión elegidas en el diálogo.
+#[derive(Deserialize, Clone)]
+pub struct PrintRequest {
+    include_incomplete: bool,
+    include_images: bool,
+    #[serde(default)]
+    columns: u8,
+    #[serde(default)]
+    font_size_pt: u32,
+    #[serde(default)]
+    font_family: String,
+}
+
+fn print_html(st: &AppState, id: &str, req: &PrintRequest) -> R<String> {
+    let p = open_project(st, id)?;
     let m = &p.manifest;
     let rc = m.source_translations.iter().find_map(|s| st.container(&s.language_id, &m.project.id, &s.resource_id).ok());
     let settings = st.settings.lock().unwrap().clone();
+    let font = if req.font_family.trim().is_empty() { settings.translation_font.clone() } else { req.font_family.clone() };
     let opts = btt_core::print::PrintOptions {
-        include_incomplete,
-        include_images,
-        font_family: format!("'{}', 'Noto Sans', serif", settings.translation_font),
-        font_size_pt: (settings.translation_font_size as f32 / 2.3).round().max(8.0) as u32,
+        include_incomplete: req.include_incomplete,
+        include_images: req.include_images,
+        font_family: format!("'{font}', 'Noto Serif', Georgia, serif"),
+        font_size_pt: if req.font_size_pt == 0 { 11 } else { req.font_size_pt.clamp(7, 24) },
         images_base: String::new(),
+        columns: if req.columns >= 2 { 2 } else { 1 },
+        justify: true,
     };
-    let html = btt_core::print::render_html(&p, rc.as_deref(), &opts).map_err(err)?;
-    let dest = st.paths.exports().join(format!("{id}.html"));
-    btt_core::project::atomic_write(&dest, &html).map_err(err)?;
-    Ok(dest.display().to_string())
-}).await
+    btt_core::print::render_html(&p, rc.as_deref(), &opts).map_err(err)
+}
+
+/// HTML del documento para la vista previa dentro de la app.
+#[tauri::command]
+async fn render_print_html(app: tauri::AppHandle, id: String, opts: PrintRequest) -> R<String> {
+    blocking(app, move |st| print_html(st, &id, &opts)).await
 }
 
 // ------------------------------------------------------------------ WACS / git
@@ -1419,6 +1446,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool {
         export_tstudio,
         export_usfm,
         export_print_html,
+        render_print_html,
         upload_project,
         pull_project,
         restore_backup_branch,

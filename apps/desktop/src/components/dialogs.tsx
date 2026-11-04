@@ -1,6 +1,6 @@
 // Diálogos compartidos: detalles de proyecto, nuevo proyecto, fuentes,
 // importar, exportar, biblioteca, respaldos, migración, comentarios.
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
@@ -13,6 +13,7 @@ import {
   type ImportMode,
   type ImportOutcome,
   type Issue,
+  type PrintRequest,
   type ProjectDetail,
   type ProjectItem,
   type ProjectRow,
@@ -553,30 +554,89 @@ export function ExportDialog({ project, onClose, onReview }: { project: ProjectI
   );
 }
 
+const PRINT_FONTS = ["Noto Serif", "Noto Sans", "Georgia", "Times New Roman", "Charis SIL", "Gentium Plus", "Andika", "Arial"];
+
 export function PrintDialog({ id, isObs, onClose }: { id: string; isObs: boolean; onClose: () => void }) {
   const { t } = useT();
+  const { settings } = useApp();
   const fb = useFeedback();
-  const [incomplete, setIncomplete] = useState(true);
-  const [images, setImages] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const go = async () => {
-    setBusy(true);
+  const [opts, setOpts] = useState<PrintRequest>({ include_incomplete: true, include_images: false, columns: 1, font_size_pt: 11, font_family: settings.translation_font });
+  const [html, setHtml] = useState<string | null>(null);
+  const [busy, setBusy] = useState<"open" | "print" | null>(null);
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const debounced = useDebounced(opts, 250);
+  // URL blob (mismo origen) para el iframe: funciona con la CSP de la app y permite print().
+  const blobUrl = useMemo(() => (html === null ? null : URL.createObjectURL(new Blob([html], { type: "text/html" }))), [html]);
+  useEffect(() => () => { if (blobUrl) URL.revokeObjectURL(blobUrl); }, [blobUrl]);
+
+  useEffect(() => {
+    let alive = true;
+    api.renderPrintHtml(id, debounced).then((h) => alive && setHtml(h)).catch(fb.error);
+    return () => {
+      alive = false;
+    };
+  }, [id, debounced]);
+
+  const set = (patch: Partial<PrintRequest>) => setOpts((o) => ({ ...o, ...patch }));
+
+  const print = () => {
+    const w = frameRef.current?.contentWindow;
+    if (!w) return;
+    setBusy("print");
     try {
-      const path = await api.exportPrintHtml(id, incomplete, images);
-      await openPath(path);
-      onClose();
+      w.focus();
+      w.print();
+    } finally {
+      setBusy(null);
+    }
+  };
+  const openInBrowser = async () => {
+    setBusy("open");
+    try {
+      await openPath(await api.exportPrintHtml(id, opts));
     } catch (e) {
       fb.error(e);
     } finally {
-      setBusy(false);
+      setBusy(null);
     }
   };
+
   return (
-    <Dialog title={t("print.title")} narrow onClose={onClose} footer={<><Button onClick={onClose}>{t("common.cancel")}</Button><Button variant="primary" busy={busy} onClick={go}>{t("details.print")}</Button></>}>
-      <div className="col">
-        <Switch on={incomplete} onChange={setIncomplete} label={t("print.incomplete")} />
-        {isObs && <Switch on={images} onChange={setImages} label={t("print.images")} />}
-        <p className="muted small">{t("print.hint")}</p>
+    <Dialog
+      title={t("print.title")}
+      wide
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="ghost" busy={busy === "open"} onClick={openInBrowser}>{t("print.open_browser")}</Button>
+          <span className="grow" />
+          <Button onClick={onClose}>{t("common.cancel")}</Button>
+          <Button variant="primary" disabled={!html} busy={busy === "print"} onClick={print}><Printer size={16} /> {t("print.save_pdf")}</Button>
+        </>
+      }
+    >
+      <div className="print-layout">
+        <div className="print-options col">
+          <Field label={t("print.font")}>
+            <select className="select" value={opts.font_family} onChange={(e) => set({ font_family: e.target.value })}>
+              {[...new Set([settings.translation_font, ...PRINT_FONTS])].map((f) => <option key={f}>{f}</option>)}
+            </select>
+          </Field>
+          <Field label={t("print.font_size")}>
+            <select className="select" value={opts.font_size_pt} onChange={(e) => set({ font_size_pt: Number(e.target.value) })}>
+              {[9, 10, 11, 12, 13, 14, 16].map((n) => <option key={n} value={n}>{n} pt</option>)}
+            </select>
+          </Field>
+          <Field label={t("print.columns")}>
+            <Tabs segmented value={String(opts.columns)} onChange={(v) => set({ columns: v === "2" ? 2 : 1 })} tabs={[{ id: "1", label: t("print.one_column") }, { id: "2", label: t("print.two_columns") }]} />
+          </Field>
+          <Switch on={opts.include_incomplete} onChange={(v) => set({ include_incomplete: v })} label={t("print.incomplete")} />
+          {isObs && <Switch on={opts.include_images} onChange={(v) => set({ include_images: v })} label={t("print.images")} />}
+          <p className="muted small" style={{ marginTop: ".4rem" }}>{t("print.hint")}</p>
+        </div>
+        <div className="print-preview">
+          {blobUrl === null ? <Spinner label={t("print.rendering")} /> : <iframe ref={frameRef} title={t("print.preview")} src={blobUrl} />}
+        </div>
       </div>
     </Dialog>
   );

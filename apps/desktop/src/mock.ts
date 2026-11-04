@@ -186,6 +186,12 @@ export async function mockInvoke<T>(cmd: string, a: Record<string, unknown> = {}
     case "export_tstudio": return delay("C:/Users/demo/BTT-Writer-3/exports/" + s("id") + ".tstudio") as T;
     case "export_usfm": return delay("C:/Users/demo/BTT-Writer-3/exports/" + s("id") + ".usfm") as T;
     case "export_print_html": return delay("C:/Users/demo/BTT-Writer-3/exports/" + s("id") + ".html") as T;
+    case "render_print_html": {
+      const o = a.opts as { columns: number; font_size_pt: number; include_incomplete: boolean };
+      const cols = o.columns >= 2 ? "columns: 2; column-gap: 2em;" : "";
+      const html = `<!doctype html><html><head><meta charset="utf-8"><style>@page{size:Letter;margin:2cm}html{background:#e9ecf1}body{font-family:'Noto Serif',Georgia,serif;font-size:${o.font_size_pt || 11}pt;line-height:1.55;margin:0;background:#fff}@media screen{body{max-width:8.5in;margin:1.2rem auto;padding:2cm 2.2cm;box-shadow:0 2px 20px rgba(0,0,0,.18);min-height:11in}}.cover{text-align:center;page-break-after:always;padding-top:30%}.cover h1{font-size:2.6em}.rule{width:4em;height:3px;background:#0e6f9a;margin:1.2em auto}.chapter h2{text-align:center;color:#0b4f70;border-bottom:1px solid #cfd6e0}.text{${cols}text-align:justify}sup.v{color:#0e6f9a;font-weight:700;font-size:.62em}</style></head><body><section class="cover"><h1>3 Juan</h1><div class="rule"></div><p>Chayahuita</p></section><section class="chapter"><h2>Capítulo 1</h2><div class="text"><p><sup class="v">1</sup>El anciano a Gayo el amado, a quien amo en verdad. <sup class="v">2</sup>Amado, oro para que seas prosperado. <sup class="v">3</sup>Pues mucho me regocijé.${o.include_incomplete ? " <sup class='v'>4</sup>No tengo yo mayor gozo." : ""}</p></div></section></body></html>`;
+      return delay(html) as T;
+    }
     case "upload_project": return new Promise((res) => setTimeout(() => res({ push: { status: "ok" }, merge: { status: "up_to_date" }, url: "https://read.bibleineverylanguage.org/demo/" + s("id"), repo_url: "https://content.bibletranslationtools.org/demo/" + s("id") } as T), 900));
     case "pull_project": return delay({ status: "up_to_date" }) as T;
     case "restore_backup_branch": return delay(undefined) as T;

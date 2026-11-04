@@ -16,6 +16,19 @@ pub struct PrintOptions {
     pub font_size_pt: u32,
     /// Ruta/URL base de las imágenes OBS (`{base}/obs-en-01-01.jpg`).
     pub images_base: String,
+    /// Columnas de texto por página (1 o 2).
+    #[serde(default = "one")]
+    pub columns: u8,
+    /// Texto justificado.
+    #[serde(default = "yes")]
+    pub justify: bool,
+}
+
+fn one() -> u8 {
+    1
+}
+fn yes() -> bool {
+    true
 }
 
 impl Default for PrintOptions {
@@ -23,9 +36,11 @@ impl Default for PrintOptions {
         PrintOptions {
             include_incomplete: true,
             include_images: false,
-            font_family: "Noto Sans, Noto Serif, serif".into(),
+            font_family: "Noto Serif, Georgia, serif".into(),
             font_size_pt: 11,
             images_base: String::new(),
+            columns: 1,
+            justify: true,
         }
     }
 }
@@ -189,7 +204,9 @@ pub fn render_html(project: &Project, source: Option<&ResourceContainer>, opts: 
         if !reference.trim().is_empty() {
             chapters_html.push_str(&format!("<p class=\"reference\">{}</p>", esc(reference.trim())));
         }
+        chapters_html.push_str("<div class=\"text\">");
         chapters_html.push_str(&body);
+        chapters_html.push_str("</div>");
         if !notes.is_empty() {
             chapters_html.push_str("<ol class=\"notes\">");
             for n in notes {
@@ -199,30 +216,52 @@ pub fn render_html(project: &Project, source: Option<&ResourceContainer>, opts: 
         }
         chapters_html.push_str("</section>");
     }
+    let columns_css = if opts.columns >= 2 { "columns: 2; column-gap: 2em; column-rule: 1px solid #ddd;" } else { "" };
+    let align = if opts.justify { "justify" } else { "start" };
+    let today = {
+        let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
+        let (y, mo, d) = civil_from_unix(secs);
+        format!("{d:02}/{mo:02}/{y}")
+    };
     let translators = if m.translators.is_empty() { String::new() } else { format!("<p class=\"translators\">{}</p>", esc(&m.translators.join(", "))) };
     let license = crate::project::LICENSE_MD.lines().filter(|l| !l.trim().is_empty()).map(|l| format!("<p>{}</p>", esc(l.trim_start_matches('#').trim()))).collect::<String>();
     Ok(format!(
         r#"<!doctype html><html lang="{lang}" dir="{dir}"><head><meta charset="utf-8"><title>{title}</title>
 <style>
-@page {{ size: Letter; margin: 1in; }}
-body {{ font-family: {font}; font-size: {size}pt; line-height: 1.5; color: #111; }}
-.cover {{ text-align: center; page-break-after: always; padding-top: 30%; }}
-.cover h1 {{ font-size: 2.4em; margin: 0 0 .3em; }}
-.license {{ page-break-after: always; font-size: .8em; color: #333; }}
+@page {{ size: Letter; margin: 2cm 2.2cm; }}
+* {{ box-sizing: border-box; }}
+html {{ background: #e9ecf1; }}
+body {{ font-family: {font}; font-size: {size}pt; line-height: 1.55; color: #111; margin: 0; background: #fff; -webkit-print-color-adjust: exact; print-color-adjust: exact; }}
+@media screen {{ body {{ max-width: 8.5in; margin: 1.2rem auto; padding: 2cm 2.2cm; box-shadow: 0 2px 20px rgba(0,0,0,.18); min-height: 11in; }} }}
+h1, h2, h3, h4 {{ font-weight: 700; line-height: 1.2; }}
+.cover {{ text-align: center; page-break-after: always; display: flex; flex-direction: column; justify-content: center; min-height: 80vh; }}
+.cover .rule {{ width: 4em; height: 3px; background: #0e6f9a; margin: 1.2em auto; }}
+.cover h1 {{ font-size: 2.6em; margin: 0 0 .2em; letter-spacing: -.01em; }}
+.cover .lang {{ font-size: 1.25em; color: #333; margin: 0; }}
+.cover .translators {{ color: #555; margin-top: 2em; font-size: .95em; }}
+.cover .meta {{ color: #888; font-size: .8em; margin-top: 3em; }}
+.license {{ page-break-after: always; font-size: .82em; color: #333; }}
+.license h3, .toc h3 {{ font-size: 1.3em; border-bottom: 2px solid #0e6f9a; padding-bottom: .3em; margin-bottom: .8em; }}
 .toc {{ page-break-after: always; }}
-.toc ol {{ columns: 2; }}
+.toc ol {{ columns: 2; column-gap: 2em; padding-inline-start: 1.5em; }}
+.toc li {{ margin: .15em 0; break-inside: avoid; }}
+.toc a {{ color: #111; text-decoration: none; }}
 .chapter {{ page-break-before: always; }}
-.chapter h2 {{ font-size: 1.5em; text-align: center; }}
-.reference {{ font-style: italic; text-align: center; color: #555; }}
-sup.v {{ color: #777; font-size: .65em; margin-inline-end: .15em; }}
-sup.note {{ color: #1a56db; font-size: .65em; }}
-p.q1 {{ margin: 0 0 0 2em; }} p.q2 {{ margin: 0 0 0 4em; }} p.qr {{ text-align: end; }} p.qc {{ text-align: center; }}
-p.m {{ text-indent: 0; }} p.p {{ text-indent: 1.5em; margin: .3em 0; }} p.pi {{ margin-left: 2em; }} p.b {{ height: 1em; }}
-h4.s {{ font-size: 1.05em; text-align: center; margin: 1em 0 .3em; }}
-ol.notes {{ border-top: 1px solid #999; margin-top: 2em; padding-top: .5em; font-size: .85em; color: #1a56db; }}
-img.obs {{ display: block; max-width: 100%; margin: .5em auto; }}
+.chapter h2 {{ font-size: 1.7em; text-align: center; margin: 0 0 .6em; padding-bottom: .3em; border-bottom: 1px solid #cfd6e0; color: #0b4f70; }}
+.chapter .text {{ {columns} text-align: {align}; hyphens: auto; -webkit-hyphens: auto; orphans: 2; widows: 2; }}
+.reference {{ font-style: italic; text-align: center; color: #555; margin: -.3em 0 .8em; }}
+sup.v {{ color: #0e6f9a; font-weight: 700; font-size: .62em; margin-inline-end: .2em; line-height: 0; }}
+sup.note {{ color: #b7791f; font-size: .62em; line-height: 0; }}
+p {{ margin: 0 0 .25em; }}
+p.q1 {{ margin-inline-start: 2em; text-indent: -1em; }} p.q2 {{ margin-inline-start: 4em; text-indent: -1em; }} p.qr {{ text-align: end; }} p.qc {{ text-align: center; }}
+p.m {{ text-indent: 0; }} p.p {{ text-indent: 1.4em; }} p.pi {{ margin-inline-start: 2em; }} p.b {{ height: .8em; }} p.li {{ margin-inline-start: 1.5em; }}
+p.p + p.p {{ margin-top: 0; }}
+h4.s {{ font-size: 1.05em; text-align: center; margin: 1em 0 .4em; break-after: avoid; }}
+ol.notes {{ border-top: 1px solid #999; margin-top: 1.5em; padding-top: .5em; padding-inline-start: 1.4em; font-size: .85em; color: #444; column-span: all; }}
+ol.notes li {{ margin: .15em 0; }}
+img.obs {{ display: block; max-width: 100%; margin: .5em auto; break-inside: avoid; }}
 </style></head><body>
-<section class="cover"><h1>{title}</h1><p>{lang_name}</p>{translators}</section>
+<section class="cover"><h1>{title}</h1><div class="rule"></div><p class="lang">{lang_name}</p>{translators}<p class="meta">BTT Writer · {today}</p></section>
 <section class="license"><h3>Licencia</h3>{license}</section>
 <section class="toc"><h3>Contenido</h3><ol>{toc}</ol></section>
 {chapters}
@@ -232,12 +271,30 @@ img.obs {{ display: block; max-width: 100%; margin: .5em auto; }}
         title = esc(&title),
         font = esc(&opts.font_family),
         size = opts.font_size_pt,
+        columns = columns_css,
+        align = align,
         lang_name = esc(&m.target_language.name),
         translators = translators,
         license = license,
         toc = toc,
         chapters = chapters_html,
+        today = today,
     ))
+}
+
+/// Fecha civil (año, mes, día) de un instante UNIX en UTC.
+fn civil_from_unix(secs: i64) -> (i64, u32, u32) {
+    let days = secs.div_euclid(86400);
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let y = yoe + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
+    (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
 #[cfg(test)]

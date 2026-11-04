@@ -148,6 +148,14 @@ export interface HelpItem {
   body: string;
 }
 
+export interface PrintRequest {
+  include_incomplete: boolean;
+  include_images: boolean;
+  columns: 1 | 2;
+  font_size_pt: number;
+  font_family: string;
+}
+
 export interface CommitInfo {
   id: string;
   time: number;
@@ -399,8 +407,8 @@ export const api = {
   importUsfm: (path: string, language: string, book: string, mode: ImportMode) => call<UsfmImportSummary>("import_usfm", { path, language, book, mode }),
   exportTstudio: (id: string, dest = "") => call<string>("export_tstudio", { id, dest }),
   exportUsfm: (id: string, dest = "") => call<string>("export_usfm", { id, dest }),
-  exportPrintHtml: (id: string, includeIncomplete: boolean, includeImages: boolean) =>
-    call<string>("export_print_html", { id, includeIncomplete, includeImages }),
+  exportPrintHtml: (id: string, opts: PrintRequest) => call<string>("export_print_html", { id, opts }),
+  renderPrintHtml: (id: string, opts: PrintRequest) => call<string>("render_print_html", { id, opts }),
 
   uploadProject: (id: string) => call<UploadResult>("upload_project", { id }),
   pullProject: (id: string) => call<MergeStatus>("pull_project", { id }),

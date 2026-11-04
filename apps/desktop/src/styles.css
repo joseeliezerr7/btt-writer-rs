@@ -444,6 +444,16 @@ input[type="checkbox"] { accent-color: var(--primary); }
 .source-banner > svg { color: var(--accent); flex: none; }
 .conflict-banner { border-color: color-mix(in srgb, var(--danger) 50%, var(--border)); background: color-mix(in srgb, var(--danger) 5%, var(--surface)); gap: .9rem; }
 
+/* Impresión: opciones + vista previa */
+.print-layout { display: grid; grid-template-columns: 250px 1fr; gap: 1rem; min-height: 520px; }
+.print-options { align-content: start; }
+.print-preview { background: #e9ecf1; border: 1px solid var(--border); border-radius: var(--r-md); overflow: hidden; display: flex; }
+.print-preview iframe { width: 100%; height: 100%; min-height: 520px; border: 0; background: #e9ecf1; flex: 1; }
+@media (max-width: 900px) {
+  .print-layout { grid-template-columns: 1fr; min-height: 0; }
+  .print-preview iframe { min-height: 360px; }
+}
+
 /* Inicio: grupos por idioma */
 .lang-group { margin-bottom: .9rem; }
 .lang-group-head { display: flex; align-items: center; gap: .8rem; width: 100%; padding: .7rem 1rem; border: 0; background: var(--surface-2); color: var(--text); cursor: pointer; text-align: left; border-radius: var(--radius); transition: background .12s; }
