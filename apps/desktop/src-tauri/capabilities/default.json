@@ -7,7 +7,17 @@
     "core:default",
     "core:window:allow-set-title",
     "opener:default",
-    "opener:allow-open-path",
+    {
+      "identifier": "opener:allow-open-path",
+      "allow": [
+        { "path": "$HOME/**" },
+        { "path": "$APPDATA/**" },
+        { "path": "$APPLOCALDATA/**" },
+        { "path": "$DOCUMENT/**" },
+        { "path": "$DOWNLOAD/**" },
+        { "path": "$TEMP/**" }
+      ]
+    },
     "opener:allow-open-url",
     "dialog:default",
     "log:default"
