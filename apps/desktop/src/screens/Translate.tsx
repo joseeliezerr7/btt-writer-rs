@@ -16,7 +16,7 @@ import {
 import { useApp } from "../app-context";
 import { formatDate, useT } from "../i18n";
 import { Button, Dialog, IconBadge, Logo, SimpleMarkdown, Spinner, Switch, Tabs, useFeedback } from "../components/ui";
-import { bookName, ExportDialog, issueText, PrintDialog, SourceSelectionDialog } from "../components/dialogs";
+import { bookName, DownloadLanguageButton, ExportDialog, issueText, PrintDialog, SourceSelectionDialog } from "../components/dialogs";
 
 type Mode = "read" | "chunk" | "review";
 
@@ -171,7 +171,8 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
               <strong>{source ? t("translate.source_not_downloaded", { name: `${source.language_name} · ${source.name}` }) : t("translate.no_source")}</strong>
               <div className="small muted">{t("translate.no_source_hint")}</div>
             </div>
-            {source && <Button size="sm" variant="primary" busy={downloading} onClick={downloadCurrentSource}><Download size={14} /> {t("common.download")}</Button>}
+            {source && <Button size="sm" variant="primary" busy={downloading} onClick={downloadCurrentSource}><Download size={14} /> {t("translate.download_this_book")}</Button>}
+            {source && <DownloadLanguageButton language={source.language_slug} languageName={source.language_name} resource={source.slug} resourceName={source.name} onDone={() => setRefresh((r) => r + 1)} />}
             <Button size="sm" onClick={() => setShowSources(true)}>{t("translate.edit_source")}</Button>
           </div>
         )}
@@ -286,14 +287,15 @@ function ChapterView(props: {
     api.getSourceChapter(source.language_slug, projectSlug, source.slug, chapter.id)
       .then((list) => setSourceChunks([...list].sort((a, b) => Number(a.chunk) - Number(b.chunk))))
       .catch(() => setSourceChunks([]));
-  }, [source?.language_slug, source?.slug, chapter.id]);
+    // `downloaded` va en las dependencias: al terminar una descarga el capítulo se recarga solo.
+  }, [source?.language_slug, source?.slug, source?.downloaded, chapter.id]);
   useEffect(() => {
     if (!source || !source.downloaded || isTw) return;
     api.getSourceInfo(source.language_slug, projectSlug, source.slug).then((i) => {
       const ci = i.chapters.indexOf(chapter.id);
       setSourceTitle({ book: i.book_title, chapter: ci >= 0 ? i.chapter_titles[ci] : "" });
     }).catch(() => {});
-  }, [source?.language_slug, source?.slug, chapter.id]);
+  }, [source?.language_slug, source?.slug, source?.downloaded, chapter.id]);
 
   const focusRef = useRef<HTMLDivElement>(null);
   useEffect(() => {

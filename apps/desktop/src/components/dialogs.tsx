@@ -348,6 +348,39 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
 
 // ---------------------------------------------------------------- selección de fuentes
 
+/** Botón "Descargar todos los libros en {idioma}" con progreso (evento `download-progress`). */
+export function DownloadLanguageButton({ language, languageName, resource, resourceName, onDone }: { language: string; languageName: string; resource: string; resourceName?: string; onDone: () => void }) {
+  const { t } = useT();
+  const fb = useFeedback();
+  const [busy, setBusy] = useState(false);
+  const [progress, setProgress] = useState<{ done: number; total: number; current: string } | null>(null);
+  useEffect(() => {
+    if (!busy || !isTauri) return;
+    const un = listen<{ done: number; total: number; current: string }>("download-progress", (e) => setProgress(e.payload));
+    return () => {
+      un.then((f) => f());
+    };
+  }, [busy]);
+  const run = async () => {
+    const ok = await fb.confirm(t("sources.download_all", { lang: languageName }), t("sources.download_all_confirm", { lang: languageName, resource: resourceName ?? resource }));
+    if (!ok) return;
+    setBusy(true);
+    setProgress(null);
+    try {
+      const done = await api.downloadLanguageSources(language, resource);
+      fb.toast(t("sources.download_all_done", { n: done.length }), "success");
+      onDone();
+    } catch (e) {
+      fb.error(String(e).includes("403") || String(e).includes("anti-bot") ? t("library.cdn_blocked") : e);
+    } finally {
+      setBusy(false);
+      setProgress(null);
+    }
+  };
+  const label = busy && progress && progress.total > 0 && progress.current ? t("sources.downloading_all", { current: progress.current, done: progress.done + 1, total: progress.total }) : t("sources.download_all", { lang: languageName });
+  return <Button size="sm" busy={busy} onClick={run} title={t("sources.download_all_hint")}><HardDriveDownload size={14} /> {label}</Button>;
+}
+
 export function SourceSelectionDialog({ detail, onClose, onChanged }: { detail: ProjectDetail; onClose: () => void; onChanged: () => void }) {
   const { t } = useT();
   const { settings } = useApp();
@@ -440,6 +473,7 @@ export function SourceSelectionDialog({ detail, onClose, onChanged }: { detail: 
             {online.map((r) => (
               <div key={label(r)} className="list-item">
                 <span className="grow">{label(r)} <span className="muted small">v{r.version}</span></span>
+                {detail.manifest.type.id !== "tw" && <DownloadLanguageButton language={r.language_slug} languageName={r.language_name} resource={r.slug} resourceName={r.name} onDone={load} />}
                 <Button size="sm" busy={busy === r.language_slug + r.slug} onClick={() => download(r)}><Download size={14} /> {t("common.download")}</Button>
               </div>
             ))}

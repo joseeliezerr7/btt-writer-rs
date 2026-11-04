@@ -429,6 +429,8 @@ export const api = {
   availableSources: (project: string, glMode: boolean) => call<ResourceRow[]>("available_sources", { project, glMode }),
   allResources: (project: string) => call<ResourceRow[]>("all_resources", { project }),
   downloadSource: (language: string, project: string, resource: string) => call<string[]>("download_source", { language, project, resource }),
+  /** Descarga todos los libros de un idioma/recurso que falten (emite `download-progress`). */
+  downloadLanguageSources: (language: string, resource: string) => call<string[]>("download_language_sources", { language, resource }),
   deleteSource: (language: string, project: string, resource: string) => call<void>("delete_source", { language, project, resource }),
   updateCatalog: () => call<string[]>("update_catalog"),
   updateLanguages: () => call<number>("update_languages"),

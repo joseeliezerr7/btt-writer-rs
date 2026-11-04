@@ -175,6 +175,7 @@ export async function mockInvoke<T>(cmd: string, a: Record<string, unknown> = {}
     case "available_sources": return delay(resources[s("project")] ?? []) as T;
     case "all_resources": return delay(s("project") ? resources[s("project")] ?? [] : Object.values(resources).flat()) as T;
     case "source_languages": return delay([{ slug: "en", name: "English", direction: "ltr" }, { slug: "es-419", name: "Español", direction: "ltr" }]) as T;
+    case "download_language_sources": { for (const list of Object.values(resources)) for (const x of list) if (x.language_slug === s("language") && x.slug === s("resource")) x.downloaded = true; return new Promise((res) => setTimeout(() => res(["mock_gen_ulb", "mock_exo_ulb"] as T), 1200)); }
     case "download_source": { const r = resources[s("project")]?.find((x) => x.language_slug === s("language") && x.slug === s("resource")); if (r) r.downloaded = true; return new Promise((res) => setTimeout(() => res([`${s("language")}_${s("project")}_${s("resource")}`] as T), 800)); }
     case "delete_source": { const r = resources[s("project")]?.find((x) => x.language_slug === s("language") && x.slug === s("resource")); if (r) r.downloaded = false; return delay(undefined) as T; }
     case "update_catalog": return new Promise((res) => setTimeout(() => res(["en_jud_ulb", "es-419_jud_ulb"] as T), 700));

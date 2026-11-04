@@ -915,6 +915,55 @@ async fn download_source(app: tauri::AppHandle, language: String, project: Strin
 }).await
 }
 
+#[derive(Serialize, Clone)]
+pub struct DownloadProgress {
+    done: usize,
+    total: usize,
+    current: String,
+}
+
+/// Descarga todos los libros de un idioma y recurso (p. ej. es-419 / ulb) que aún no
+/// estén en disco, con sus ayudas. Emite `download-progress` por cada libro.
+#[tauri::command]
+async fn download_language_sources(app: tauri::AppHandle, language: String, resource: String) -> R<Vec<String>> {
+    let handle = app.clone();
+    blocking(app, move |st| {
+        let rows: Vec<ResourceRow> = st
+            .library
+            .lock()
+            .unwrap()
+            .resources("")
+            .map_err(err)?
+            .into_iter()
+            .filter(|r| r.r#type == "book" && r.language_slug == language && r.slug == resource && !r.downloaded && !r.url.is_empty())
+            .collect();
+        let client = btt_core::sources::http_client().map_err(err)?;
+        let total = rows.len();
+        let mut done = vec![];
+        let mut failed = vec![];
+        for (i, row) in rows.iter().enumerate() {
+            let _ = handle.emit("download-progress", DownloadProgress { done: i, total, current: row.project_name.clone() });
+            let lib = st.library.lock().unwrap();
+            let result = btt_core::sources::download_resource(&lib, row, &client, true);
+            drop(lib);
+            st.clear_rc_cache();
+            match result {
+                Ok(mut d) => done.append(&mut d),
+                Err(e) => failed.push(format!("{}: {e}", row.project_slug)),
+            }
+        }
+        let _ = handle.emit("download-progress", DownloadProgress { done: total, total, current: String::new() });
+        if !failed.is_empty() && done.is_empty() {
+            return Err(failed.join("\n"));
+        }
+        if !failed.is_empty() {
+            log::warn!("libros no descargados: {}", failed.join("; "));
+        }
+        Ok(done)
+    })
+    .await
+}
+
 #[tauri::command]
 fn delete_source(st: State<AppState>, language: String, project: String, resource: String) -> R<()> {
     st.library.lock().unwrap().delete_container(&language, &project, &resource).map_err(err)?;
@@ -1488,6 +1537,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool {
         all_resources,
         source_languages,
         download_source,
+        download_language_sources,
         delete_source,
         update_catalog,
         update_languages,
