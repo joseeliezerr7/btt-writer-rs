@@ -48,6 +48,8 @@ impl Paths {
     pub fn fonts(&self) -> PathBuf { self.root.join("fonts") }
     pub fn logs(&self) -> PathBuf { self.root.join("logs") }
     pub fn temp(&self) -> PathBuf { self.root.join("temp") }
+    /// Caché del listado de proyectos (chunks traducidos, conflictos) por fecha de modificación.
+    pub fn list_cache_file(&self) -> PathBuf { self.root.join("list-cache.json") }
     pub fn settings_file(&self) -> PathBuf { self.root.join("settings.json") }
     pub fn profile_file(&self) -> PathBuf { self.root.join("profile.json") }
     pub fn backup_state_file(&self) -> PathBuf { self.root.join("backup-state.json") }

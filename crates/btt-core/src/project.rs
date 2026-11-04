@@ -120,7 +120,8 @@ impl Project {
                 out.push(p);
             }
         }
-        out.sort_by_key(|p| std::cmp::Reverse(p.modified_at()));
+        // La clave recorre los archivos del proyecto: calcularla una sola vez por proyecto.
+        out.sort_by_cached_key(|p| std::cmp::Reverse(p.modified_at()));
         Ok(out)
     }
 
@@ -134,20 +135,85 @@ impl Project {
 
     /// Momento de la última modificación (segundos UNIX) considerando los chunks.
     pub fn modified_at(&self) -> u64 {
-        let mut latest = mtime(&self.root.join(MANIFEST_FILE));
+        self.modified_at_ms() / 1000
+    }
+
+    /// Igual que `modified_at` pero en milisegundos (clave de caché fiable).
+    pub fn modified_at_ms(&self) -> u64 {
+        let mut latest = mtime_ms(&self.root.join(MANIFEST_FILE));
         if let Ok(rd) = fs::read_dir(&self.root) {
             for e in rd.flatten() {
                 let p = e.path();
                 if p.is_dir() && p.file_name().map(|n| n != ".git").unwrap_or(false) {
                     if let Ok(files) = fs::read_dir(&p) {
                         for f in files.flatten() {
-                            latest = latest.max(mtime(&f.path()));
+                            latest = latest.max(mtime_ms(&f.path()));
                         }
                     }
                 }
             }
         }
         latest
+    }
+
+    /// Recorre los chunks una sola vez: chunks con texto y conflictos de git.
+    /// Es lo costoso del listado; se cachea por `modified_at_ms`.
+    pub fn scan(&self) -> ProjectScan {
+        let modified_at_ms = self.modified_at_ms();
+        let mut translated_chunks = 0;
+        let mut has_conflicts = false;
+        if let Ok(rd) = fs::read_dir(&self.root) {
+            for e in rd.flatten() {
+                let p = e.path();
+                if !p.is_dir() || p.file_name().map(|n| n == ".git").unwrap_or(true) {
+                    continue;
+                }
+                // `front/` (título del libro) no cuenta como chunk, igual que en `chapters()`.
+                let is_front = p.file_name().map(|n| n == FRONT_DIR).unwrap_or(false);
+                let Ok(files) = fs::read_dir(&p) else { continue };
+                for f in files.flatten() {
+                    let fp = f.path();
+                    if fp.extension().map(|x| x == "txt").unwrap_or(false) {
+                        let Ok(text) = fs::read_to_string(&fp) else { continue };
+                        if !is_front && !text.trim().is_empty() {
+                            translated_chunks += 1;
+                        }
+                        if !has_conflicts && crate::conflicts::has_conflicts(&text) {
+                            has_conflicts = true;
+                        }
+                    }
+                }
+            }
+        }
+        ProjectScan { modified_at_ms, translated_chunks, has_conflicts }
+    }
+
+    /// Resumen sin recorrer el disco, a partir de un `scan` previo.
+    pub fn summary_from_scan(&self, scan: &ProjectScan) -> ProjectSummary {
+        let mut s = self.summary_without_io();
+        s.translated_chunks = scan.translated_chunks;
+        s.modified_at = scan.modified_at_ms / 1000;
+        s
+    }
+
+    fn summary_without_io(&self) -> ProjectSummary {
+        let m = &self.manifest;
+        ProjectSummary {
+            id: self.id(),
+            path: self.root.display().to_string(),
+            language_id: m.target_language.id.clone(),
+            language_name: m.target_language.name.clone(),
+            language_direction: m.target_language.direction.clone(),
+            project_id: m.project.id.clone(),
+            project_name: m.project.name.clone(),
+            type_id: m.type_.id.clone(),
+            resource_id: m.resource.id.clone(),
+            resource_name: m.resource.name.clone(),
+            translators: m.translators.clone(),
+            finished_chunks: m.finished_chunks.len(),
+            translated_chunks: 0,
+            modified_at: 0,
+        }
     }
 
     /// Capítulos existentes en disco (ordenados), sin `front`.
@@ -343,13 +409,21 @@ fn validate_segment(s: &str) -> Result<()> {
     Ok(())
 }
 
-fn mtime(p: &Path) -> u64 {
+fn mtime_ms(p: &Path) -> u64 {
     fs::metadata(p)
         .and_then(|m| m.modified())
         .ok()
         .and_then(|t| t.duration_since(SystemTime::UNIX_EPOCH).ok())
-        .map(|d| d.as_secs())
+        .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// Resultado de recorrer los chunks de un proyecto (ver `Project::scan`).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ProjectScan {
+    pub modified_at_ms: u64,
+    pub translated_chunks: usize,
+    pub has_conflicts: bool,
 }
 
 /// Escritura atómica: temp + rename. Evita archivos a medio escribir si la

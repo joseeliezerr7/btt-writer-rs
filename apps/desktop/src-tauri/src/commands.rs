@@ -172,7 +172,8 @@ fn total_chunks(st: &AppState, project: &Project) -> usize {
 }
 
 fn list_item(st: &AppState, p: &Project) -> ProjectListItem {
-    let mut summary = p.summary();
+    let scan = st.project_scan(p);
+    let mut summary = p.summary_from_scan(&scan);
     if summary.project_name.is_empty() {
         let ui_lang = st.settings.lock().unwrap().ui_language.clone();
         let lang = if ui_lang == "es" { "es-419" } else { "en" };
@@ -180,15 +181,26 @@ fn list_item(st: &AppState, p: &Project) -> ProjectListItem {
     }
     let total = total_chunks(st, p);
     let progress = if total == 0 { 0.0 } else { (summary.finished_chunks as f32 / total as f32).min(1.0) };
-    let has_conflicts = gitrepo::conflicted_files(&p.root).map(|f| !f.is_empty()).unwrap_or(false);
     let last_backup = st.backup_state.lock().unwrap().last_time.get(&summary.id).copied();
-    ProjectListItem { summary, total_chunks: total, progress, has_conflicts, last_backup }
+    ProjectListItem { summary, total_chunks: total, progress, has_conflicts: scan.has_conflicts, last_backup }
 }
 
 #[tauri::command]
-fn list_projects(st: State<AppState>) -> R<Vec<ProjectListItem>> {
-    let projects = Project::list(&st.paths.translations()).map_err(err)?;
-    Ok(projects.iter().map(|p| list_item(&st, p)).collect())
+async fn list_projects(app: tauri::AppHandle) -> R<Vec<ProjectListItem>> {
+    blocking(app, move |st| {
+        let projects = Project::list(&st.paths.translations()).map_err(err)?;
+        // El recorrido de chunks de los proyectos sin caché es E/S pura (y el
+        // antivirus la encarece): repartirlo entre varios hilos.
+        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).clamp(2, 8);
+        let per = projects.len().div_ceil(threads).max(1);
+        let items: Vec<ProjectListItem> = std::thread::scope(|scope| {
+            let handles: Vec<_> = projects.chunks(per).map(|group| scope.spawn(move || group.iter().map(|p| list_item(st, p)).collect::<Vec<_>>())).collect();
+            handles.into_iter().flat_map(|h| h.join().unwrap_or_default()).collect()
+        });
+        st.save_list_cache();
+        Ok(items)
+    })
+    .await
 }
 
 #[derive(Serialize)]
@@ -297,9 +309,10 @@ fn chapter_structure(st: &AppState, project: &Project) -> R<Vec<ChapterInfo>> {
 }
 
 #[tauri::command]
-fn get_project(st: State<AppState>, id: String) -> R<ProjectDetail> {
-    let p = open_project(&st, &id)?;
-    let chapters = chapter_structure(&st, &p)?;
+async fn get_project(app: tauri::AppHandle, id: String) -> R<ProjectDetail> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
+    let chapters = chapter_structure(st, &p)?;
     let lib = st.library.lock().unwrap();
     let mut sources = vec![];
     for s in &p.manifest.source_translations {
@@ -329,12 +342,13 @@ fn get_project(st: State<AppState>, id: String) -> R<ProjectDetail> {
     }
     drop(lib);
     Ok(ProjectDetail {
-        item: list_item(&st, &p),
+        item: list_item(st, &p),
         book_title: p.read_book_title().unwrap_or_default(),
         manifest: p.manifest.clone(),
         chapters,
         sources,
     })
+}).await
 }
 
 #[derive(Deserialize)]
@@ -347,7 +361,8 @@ pub struct NewProject {
 }
 
 #[tauri::command]
-fn create_project(st: State<AppState>, spec: NewProject) -> R<String> {
+async fn create_project(app: tauri::AppHandle, spec: NewProject) -> R<String> {
+    blocking(app, move |st| {
     let lib = st.library.lock().unwrap();
     let lang = lib
         .target_language(&spec.language)
@@ -398,11 +413,13 @@ fn create_project(st: State<AppState>, spec: NewProject) -> R<String> {
     st.settings.lock().unwrap().last_project = id.clone();
     let _ = st.save_settings();
     Ok(id)
+}).await
 }
 
 #[tauri::command]
-fn delete_project(st: State<AppState>, id: String) -> R<String> {
-    let p = open_project(&st, &id)?;
+async fn delete_project(app: tauri::AppHandle, id: String) -> R<String> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
     // Respaldo previo con fecha.
     let stamp = chrono_like_stamp();
     let dest = st.paths.backups().join(format!("{id}.{stamp}.tstudio"));
@@ -415,6 +432,7 @@ fn delete_project(st: State<AppState>, id: String) -> R<String> {
     drop(s);
     let _ = st.save_settings();
     Ok(backup.display().to_string())
+}).await
 }
 
 fn chrono_like_stamp() -> String {
@@ -440,11 +458,13 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 }
 
 #[tauri::command]
-fn change_resource(st: State<AppState>, id: String, resource: String) -> R<String> {
-    let p = open_project(&st, &id)?;
+async fn change_resource(app: tauri::AppHandle, id: String, resource: String) -> R<String> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
     let p = p.change_resource(IdName::new(&resource, resource_name(&resource))).map_err(err)?;
     gitrepo::commit_all(&p.root, &st.author(), "change resource").map_err(err)?;
     Ok(p.id())
+}).await
 }
 
 #[tauri::command]
@@ -609,8 +629,9 @@ pub struct MarkAllResult {
 }
 
 #[tauri::command]
-fn mark_all_chunks(st: State<AppState>, id: String) -> R<MarkAllResult> {
-    let mut p = open_project(&st, &id)?;
+async fn mark_all_chunks(app: tauri::AppHandle, id: String) -> R<MarkAllResult> {
+    blocking(app, move |st| {
+    let mut p = open_project(st, &id)?;
     let m = p.manifest.clone();
     let rc = m.source_translations.iter().find_map(|s| st.container(&s.language_id, &m.project.id, &s.resource_id).ok());
     let results = validation::validate_project(&p, rc.as_deref()).map_err(err)?;
@@ -627,20 +648,25 @@ fn mark_all_chunks(st: State<AppState>, id: String) -> R<MarkAllResult> {
     p.save_manifest().map_err(err)?;
     gitrepo::commit_all(&p.root, &st.author(), gitrepo::AUTOSAVE_MESSAGE).map_err(err)?;
     Ok(MarkAllResult { marked, total: results.len(), invalid })
+}).await
 }
 
 #[tauri::command]
-fn validate_project(st: State<AppState>, id: String) -> R<Vec<ChunkValidation>> {
-    let p = open_project(&st, &id)?;
+async fn validate_project(app: tauri::AppHandle, id: String) -> R<Vec<ChunkValidation>> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
     let m = &p.manifest;
     let rc = m.source_translations.iter().find_map(|s| st.container(&s.language_id, &m.project.id, &s.resource_id).ok());
     validation::validate_project(&p, rc.as_deref()).map_err(err)
+}).await
 }
 
 #[tauri::command]
-fn commit_project(st: State<AppState>, id: String) -> R<Option<String>> {
-    let p = open_project(&st, &id)?;
+async fn commit_project(app: tauri::AppHandle, id: String) -> R<Option<String>> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
     gitrepo::commit_all(&p.root, &st.author(), gitrepo::AUTOSAVE_MESSAGE).map_err(err)
+}).await
 }
 
 #[tauri::command]
@@ -664,8 +690,9 @@ pub struct SearchHit {
 }
 
 #[tauri::command]
-fn search_project(st: State<AppState>, id: String, query: String, in_source: bool) -> R<Vec<SearchHit>> {
-    let p = open_project(&st, &id)?;
+async fn search_project(app: tauri::AppHandle, id: String, query: String, in_source: bool) -> R<Vec<SearchHit>> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
     let q = query.trim().to_lowercase();
     if q.is_empty() {
         return Ok(vec![]);
@@ -694,6 +721,7 @@ fn search_project(st: State<AppState>, id: String, query: String, in_source: boo
         }
     }
     Ok(hits)
+}).await
 }
 
 fn snippet_for(text: &str, q: &str) -> Option<String> {
@@ -926,12 +954,14 @@ async fn download_index(app: tauri::AppHandle) -> R<()> {
 }
 
 #[tauri::command]
-fn import_index_file(st: State<AppState>, path: String) -> R<()> {
+async fn import_index_file(app: tauri::AppHandle, path: String) -> R<()> {
+    blocking(app, move |st| {
     let bytes = std::fs::read(&path).map_err(err)?;
     if !bytes.starts_with(b"SQLite format 3") {
         return Err("el archivo no es una base SQLite".into());
     }
-    replace_index(&st, &bytes)
+    replace_index(st, &bytes)
+}).await
 }
 
 fn replace_index(st: &AppState, bytes: &[u8]) -> R<()> {
@@ -965,7 +995,8 @@ fn replace_index(st: &AppState, bytes: &[u8]) -> R<()> {
 }
 
 #[tauri::command]
-fn import_source_container(st: State<AppState>, path: String) -> R<String> {
+async fn import_source_container(app: tauri::AppHandle, path: String) -> R<String> {
+    blocking(app, move |st| {
     let p = Path::new(&path);
     let rc = if p.is_dir() {
         // Carpeta RC abierta: empaquetar.
@@ -981,6 +1012,7 @@ fn import_source_container(st: State<AppState>, path: String) -> R<String> {
     st.library.lock().unwrap().import_container(&rc).map_err(err)?;
     st.clear_rc_cache();
     Ok(rc.slug())
+}).await
 }
 
 fn walkdir_files(root: &Path) -> Vec<PathBuf> {
@@ -1009,9 +1041,11 @@ fn inspect_tstudio(path: String) -> R<btt_core::tstudio::ArchiveManifest> {
 }
 
 #[tauri::command]
-fn import_tstudio(st: State<AppState>, path: String, mode: ImportMode) -> R<Vec<ImportOutcome>> {
+async fn import_tstudio(app: tauri::AppHandle, path: String, mode: ImportMode) -> R<Vec<ImportOutcome>> {
+    blocking(app, move |st| {
     let out = btt_core::tstudio::import(Path::new(&path), &st.paths.translations(), mode, &st.author()).map_err(err)?;
     Ok(out)
+}).await
 }
 
 #[derive(Serialize)]
@@ -1027,7 +1061,8 @@ pub struct UsfmImportSummary {
 
 /// Analiza un USFM; si `language` no está vacío, lo importa como proyecto.
 #[tauri::command]
-fn import_usfm(st: State<AppState>, path: String, language: String, book: String, mode: ImportMode) -> R<UsfmImportSummary> {
+async fn import_usfm(app: tauri::AppHandle, path: String, language: String, book: String, mode: ImportMode) -> R<UsfmImportSummary> {
+    blocking(app, move |st| {
     let raw = std::fs::read(&path).map_err(err)?;
     let text = String::from_utf8_lossy(&raw).into_owned();
     let parsed = btt_core::usfm::parse_book(&text).map_err(err)?;
@@ -1078,6 +1113,7 @@ fn import_usfm(st: State<AppState>, path: String, language: String, book: String
     summary.project_id = outcome.id.clone();
     summary.outcome = Some(outcome);
     Ok(summary)
+}).await
 }
 
 fn uuid_simple() -> String {
@@ -1085,18 +1121,21 @@ fn uuid_simple() -> String {
 }
 
 #[tauri::command]
-fn export_tstudio(st: State<AppState>, id: String, dest: String) -> R<String> {
-    let p = open_project(&st, &id)?;
+async fn export_tstudio(app: tauri::AppHandle, id: String, dest: String) -> R<String> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
     let dest = if dest.is_empty() { st.paths.exports().join(format!("{id}.tstudio")) } else { PathBuf::from(dest) };
     let out = btt_core::tstudio::export(&[&p], &dest, &st.author(), btt_core::VERSION).map_err(err)?;
     st.backup_state.lock().unwrap().last_time.insert(id, now());
     let _ = st.save_backup_state();
     Ok(out.display().to_string())
+}).await
 }
 
 #[tauri::command]
-fn export_usfm(st: State<AppState>, id: String, dest: String) -> R<String> {
-    let p = open_project(&st, &id)?;
+async fn export_usfm(app: tauri::AppHandle, id: String, dest: String) -> R<String> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
     if p.manifest.type_.id != "text" || p.manifest.resource.id == "obs" {
         return Err("Solo los proyectos de texto bíblico se exportan a USFM".into());
     }
@@ -1108,11 +1147,13 @@ fn export_usfm(st: State<AppState>, id: String, dest: String) -> R<String> {
     };
     btt_core::project::atomic_write(&dest, &usfm).map_err(err)?;
     Ok(dest.display().to_string())
+}).await
 }
 
 #[tauri::command]
-fn export_print_html(st: State<AppState>, id: String, include_incomplete: bool, include_images: bool) -> R<String> {
-    let p = open_project(&st, &id)?;
+async fn export_print_html(app: tauri::AppHandle, id: String, include_incomplete: bool, include_images: bool) -> R<String> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
     let m = &p.manifest;
     let rc = m.source_translations.iter().find_map(|s| st.container(&s.language_id, &m.project.id, &s.resource_id).ok());
     let settings = st.settings.lock().unwrap().clone();
@@ -1127,6 +1168,7 @@ fn export_print_html(st: State<AppState>, id: String, include_incomplete: bool, 
     let dest = st.paths.exports().join(format!("{id}.html"));
     btt_core::project::atomic_write(&dest, &html).map_err(err)?;
     Ok(dest.display().to_string())
+}).await
 }
 
 // ------------------------------------------------------------------ WACS / git
@@ -1244,13 +1286,19 @@ fn list_backups(st: State<AppState>) -> R<Vec<BackupEntry>> {
 }
 
 #[tauri::command]
-fn run_backup_now(st: State<AppState>) -> R<btt_core::backup::BackupReport> {
+async fn run_backup_now(app: tauri::AppHandle) -> R<btt_core::backup::BackupReport> {
+    blocking(app, move |st| {
     let author = st.author();
-    let mut bs = st.backup_state.lock().unwrap();
+    let mut bs = st.backup_state.lock().unwrap().clone();
     let report = btt_core::backup::run(&st.paths.translations(), &st.paths.backups(), &mut bs, &author, btt_core::VERSION).map_err(err)?;
-    drop(bs);
+    {
+        let mut cur = st.backup_state.lock().unwrap();
+        cur.last_hash.extend(bs.last_hash);
+        cur.last_time.extend(bs.last_time);
+    }
     st.save_backup_state().map_err(err)?;
     Ok(report)
+}).await
 }
 
 #[tauri::command]

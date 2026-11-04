@@ -5,6 +5,7 @@ mod commands;
 use btt_core::appdata::{Paths, Profile, Settings};
 use btt_core::backup::BackupState;
 use btt_core::library::Library;
+use btt_core::project::ProjectScan;
 use btt_core::rc::ResourceContainer;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -20,6 +21,8 @@ pub struct AppState {
     pub backup_state: Mutex<BackupState>,
     /// Contenedores abiertos (slug → RC). Se vacía al descargar/borrar fuentes.
     pub rc_cache: Mutex<HashMap<String, Arc<ResourceContainer>>>,
+    /// Recorrido de chunks por proyecto (id → scan), válido mientras no cambie `modified_at_ms`.
+    pub list_cache: Mutex<HashMap<String, ProjectScan>>,
     pub device_name: String,
 }
 
@@ -53,6 +56,31 @@ impl AppState {
     pub fn save_backup_state(&self) -> btt_core::Result<()> {
         self.backup_state.lock().unwrap().save(&self.paths.backup_state_file())
     }
+
+    /// Scan de un proyecto, reutilizando la caché si los archivos no cambiaron.
+    pub fn project_scan(&self, project: &btt_core::project::Project) -> ProjectScan {
+        let id = project.id();
+        let mtime = project.modified_at_ms();
+        if let Some(c) = self.list_cache.lock().unwrap().get(&id) {
+            if c.modified_at_ms == mtime {
+                return c.clone();
+            }
+        }
+        let scan = project.scan();
+        self.list_cache.lock().unwrap().insert(id, scan.clone());
+        scan
+    }
+
+    pub fn save_list_cache(&self) {
+        let cache = self.list_cache.lock().unwrap();
+        if let Ok(json) = serde_json::to_string(&*cache) {
+            let _ = btt_core::project::atomic_write(&self.paths.list_cache_file(), &json);
+        }
+    }
+}
+
+fn load_list_cache(path: &std::path::Path) -> HashMap<String, ProjectScan> {
+    std::fs::read_to_string(path).ok().and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default()
 }
 
 /// Carpeta raíz de datos según plataforma.
@@ -110,6 +138,7 @@ pub fn run() {
             let settings = Settings::load(&paths.settings_file());
             let profile = Profile::load(&paths.profile_file());
             let backup_state = BackupState::load(&paths.backup_state_file());
+            let list_cache = load_list_cache(&paths.list_cache_file());
             let state = AppState {
                 paths,
                 settings: Mutex::new(settings),
@@ -117,6 +146,7 @@ pub fn run() {
                 library: Mutex::new(library),
                 backup_state: Mutex::new(backup_state),
                 rc_cache: Mutex::new(HashMap::new()),
+                list_cache: Mutex::new(list_cache),
                 device_name: device_name(),
             };
             app.manage(state);
@@ -143,10 +173,16 @@ fn start_backup_timer(app: tauri::AppHandle) {
         }
         let st = app.state::<AppState>();
         let author = st.author();
-        let mut bs = st.backup_state.lock().unwrap();
+        // Trabajar sobre una copia: el candado no se retiene durante el recorrido
+        // de todos los proyectos (el listado también lo necesita).
+        let mut bs = st.backup_state.lock().unwrap().clone();
         match btt_core::backup::run(&st.paths.translations(), &st.paths.backups(), &mut bs, &author, btt_core::VERSION) {
             Ok(report) => {
-                drop(bs);
+                {
+                    let mut cur = st.backup_state.lock().unwrap();
+                    cur.last_hash.extend(bs.last_hash);
+                    cur.last_time.extend(bs.last_time);
+                }
                 let _ = st.save_backup_state();
                 if !report.backed_up.is_empty() {
                     let _ = app.emit("backup-done", &report.backed_up);
