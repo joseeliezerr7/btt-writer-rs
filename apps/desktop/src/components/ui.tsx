@@ -117,15 +117,15 @@ export function Logo({ size = 32, className }: { size?: number; className?: stri
     <svg className={"logo " + (className ?? "")} width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
       <defs>
         <linearGradient id={`g${id}`} x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#2a93c0" />
-          <stop offset="1" stopColor="#0b4f70" />
+          <stop offset="0" stopColor="#2b8fc2" />
+          <stop offset="1" stopColor="#0b4668" />
         </linearGradient>
       </defs>
-      <rect width="48" height="48" rx="13" fill={`url(#g${id})`} />
-      <path d="M11 15.2c3.9-1.9 7.9-1.8 12 .6v18.4c-4.1-2.4-8.1-2.5-12-.6z" fill="#fff" opacity=".95" />
-      <path d="M37 15.2c-3.9-1.9-7.9-1.8-12 .6v18.4c4.1-2.4 8.1-2.5 12-.6z" fill="#fff" opacity=".7" />
-      <path d="M23 15.8v18.4" stroke="#0b4f70" strokeWidth="1.2" opacity=".5" />
-      <path d="M31.5 12.5l4 4-7.5 7.5-4-4z" fill="#f2c15c" />
+      {/* Mismo dibujo que el icono de la app (apps/desktop/icon-source.png). */}
+      <rect width="48" height="48" rx="12" fill={`url(#g${id})`} />
+      <path d="M23 15.5C18.8 13 14 12.8 9.5 14.6V34.4C14 32.6 18.8 32.8 23 35.3Z" fill="#fff" />
+      <path d="M25 15.5C29.2 13 34 12.8 38.5 14.6V34.4C34 32.6 29.2 32.8 25 35.3Z" fill="#fff" opacity=".83" />
+      <path d="M27.2 31.6L37.6 21.2" stroke="#f6c453" strokeWidth="3.4" strokeLinecap="round" />
     </svg>
   );
 }
