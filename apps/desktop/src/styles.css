@@ -407,7 +407,20 @@ input[type="checkbox"] { accent-color: var(--primary); }
 .pane-head .ref { font-size: .72rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; }
 .source-text { font-family: var(--font-text); font-size: var(--size-source); line-height: 1.65; flex: 1; color: var(--text); }
 .source-text p { margin: 0 0 .5em; }
-.source-text sup, .target-text sup { color: var(--primary); font-size: .55em; margin-right: .2em; font-weight: 700; vertical-align: top; position: relative; top: .25em; }
+.source-text sup, .target-text sup {
+  display: inline-block; color: var(--primary); background: var(--primary-soft); font-family: var(--font-ui);
+  font-size: .5em; font-weight: 800; line-height: 1.5; padding: 0 .45em; margin: 0 .3em 0 .15em; border-radius: 999px;
+  vertical-align: .55em; position: static; letter-spacing: .02em;
+}
+.read-card .source-text sup, .read-card .target-text sup { font-size: .55em; }
+
+/* Fichas de versículos para insertar en el borrador (arrastrar o pulsar) */
+.verse-chips { display: flex; flex-wrap: wrap; align-items: center; gap: .3rem; margin-bottom: .55rem; padding-bottom: .55rem; border-bottom: 1px dashed var(--border); }
+.verse-chip { min-width: 30px; height: 28px; padding: 0 .55rem; border-radius: 999px; border: 1.5px dashed var(--primary); background: var(--primary-soft); color: var(--primary); font-weight: 800; font-size: .82rem; cursor: grab; transition: transform .1s, background .12s; user-select: none; }
+.verse-chip:hover { background: color-mix(in srgb, var(--primary) 18%, var(--surface)); transform: translateY(-1px); }
+.verse-chip:active { cursor: grabbing; transform: scale(.96); }
+.verse-chip.used { border-style: solid; border-color: var(--border-strong); background: var(--surface-3); color: var(--muted); cursor: default; opacity: .7; transform: none; }
+.editor.drop-target { box-shadow: inset 0 0 0 2px var(--primary); border-radius: 8px; }
 .source-text .fn { color: var(--accent); cursor: help; font-size: .6em; vertical-align: super; }
 .target-text { font-family: var(--font-text); font-size: var(--size-target); line-height: 1.65; flex: 1; white-space: pre-wrap; }
 .editor { font-family: var(--font-text); font-size: var(--size-target); line-height: 1.65; width: 100%; flex: 1; min-height: 140px; border: 0; outline: none; background: transparent; resize: vertical; padding: 0; color: var(--text); }

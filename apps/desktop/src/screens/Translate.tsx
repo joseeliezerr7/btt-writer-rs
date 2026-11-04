@@ -517,6 +517,33 @@ function ChunkCard(props: {
     save(text.slice(0, pos) + note + text.slice(pos));
   };
 
+  /** Versos ya marcados en el borrador (`\v 3` o rangos `\v 3-4`). */
+  const versesInText = new Set<number>();
+  for (const m of text.matchAll(/\\v\s+(\d+)(?:-(\d+))?/g)) {
+    const a = Number(m[1]);
+    const b = m[2] ? Number(m[2]) : a;
+    for (let n = a; n <= b; n++) versesInText.add(n);
+  }
+
+  /** Inserta `\v N` en el cursor (o al final) con los espacios necesarios. */
+  const insertVerse = (n: number) => {
+    if (versesInText.has(n)) return;
+    const el = textRef.current;
+    const pos = el?.selectionStart ?? text.length;
+    const before = text.slice(0, pos);
+    const after = text.slice(pos);
+    const lead = before.length && !/\s$/.test(before) ? " " : "";
+    const snippet = `${lead}\\v ${n} `;
+    save(before + snippet + after.replace(/^\s+/, ""));
+    const caret = before.length + snippet.length;
+    setTimeout(() => {
+      if (el) {
+        el.focus();
+        el.setSelectionRange(caret, caret);
+      }
+    }, 0);
+  };
+
   const resolveConflict = async (option: string) => {
     await api.writeChunk(id, chapter, chunk.id, option).catch(fb.error);
     await reload();
@@ -613,15 +640,40 @@ function ChunkCard(props: {
         ) : isHelps && !isTitle ? (
           <HelpsEditor items={data.helps} type={type} readOnly={!canEdit} onChange={async (items) => { const txt = await api.writeHelps(id, chapter, chunk.id, items).catch((e) => { fb.error(e); return null; }); if (txt !== null) setText(txt); }} />
         ) : canEdit ? (
-          <textarea
-            ref={textRef}
-            className={"editor" + (props.rtl ? " rtl" : "")}
-            value={text}
-            placeholder={placeholder}
-            onChange={(e) => save(e.target.value)}
-            onFocus={() => { if (!props.review) setEditing(true); }}
-            spellCheck={false}
-          />
+          <>
+            {!isTitle && !isHelps && expected.length > 0 && (
+              <div className="verse-chips" title={t("translate.verse_chips_hint")}>
+                <span className="small muted" style={{ marginRight: ".2rem" }}>{t("translate.verse_chips")}</span>
+                {expected.map((v) => {
+                  const used = versesInText.has(v);
+                  return (
+                    <button
+                      key={v}
+                      type="button"
+                      className={"verse-chip" + (used ? " used" : "")}
+                      draggable={!used}
+                      disabled={used}
+                      onDragStart={(e) => { e.dataTransfer.setData("text/plain", `\\v ${v} `); e.dataTransfer.effectAllowed = "copy"; }}
+                      onClick={() => insertVerse(v)}
+                      title={used ? t("translate.verse_used", { n: v }) : t("translate.verse_insert", { n: v })}
+                    >
+                      {v}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+            <textarea
+              ref={textRef}
+              className={"editor" + (props.rtl ? " rtl" : "")}
+              value={text}
+              placeholder={placeholder}
+              onChange={(e) => save(e.target.value)}
+              onFocus={() => { if (!props.review) setEditing(true); }}
+              onDragOver={(e) => { if (e.dataTransfer.types.includes("text/plain")) e.dataTransfer.dropEffect = "copy"; }}
+              spellCheck={false}
+            />
+          </>
         ) : (
           <div className={"target-text" + (props.rtl ? " rtl" : "")} onDoubleClick={startEdit}>
             {isTitle ? text : <UsfmText text={text} />}
