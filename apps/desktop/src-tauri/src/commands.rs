@@ -149,26 +149,29 @@ pub struct ProjectListItem {
 
 fn total_chunks(st: &AppState, project: &Project) -> usize {
     let m = &project.manifest;
-    // Fuente seleccionada → chunks del contenedor; si no, versificación.
+    // Los chunks que el proyecto ya tiene en disco (pueden ser más que los de la
+    // fuente si se creó con otra división, p. ej. en la 1.6).
+    let on_disk: usize = project.chapters().unwrap_or_default().iter().map(|c| project.chunks(c).map(|x| x.len()).unwrap_or(0)).sum();
+    if m.type_.id == "tw" {
+        return on_disk.max(project.chunks("01").map(|c| c.len()).unwrap_or(0));
+    }
+    // Fuente seleccionada → chunks del contenedor; si no, versificación del índice.
+    let mut expected = 0;
     for s in &m.source_translations {
         if let Ok(rc) = st.container(&s.language_id, &m.project.id, &s.resource_id) {
             let n: usize = rc.chapters().iter().map(|c| rc.chunks(c).len()).sum();
             if n > 0 {
-                return n;
+                expected = n;
+                break;
             }
         }
     }
-    if m.type_.id == "tw" {
-        return project.chunks("01").map(|c| c.len()).unwrap_or(0);
+    if expected == 0 {
+        let lib = st.library.lock().unwrap();
+        let markers = lib.chunk_markers(&m.project.id).unwrap_or_default();
+        expected = markers.values().map(|v| v.len()).sum();
     }
-    let lib = st.library.lock().unwrap();
-    let markers = lib.chunk_markers(&m.project.id).unwrap_or_default();
-    let n: usize = markers.values().map(|v| v.len()).sum();
-    if n > 0 {
-        n
-    } else {
-        project.chapters().unwrap_or_default().iter().map(|c| project.chunks(c).map(|x| x.len()).unwrap_or(0)).sum()
-    }
+    expected.max(on_disk)
 }
 
 fn list_item(st: &AppState, p: &Project) -> ProjectListItem {

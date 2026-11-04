@@ -1,7 +1,7 @@
 // Pantalla de traducción: modos lectura / chunk / revisión, fuentes, recursos,
 // búsqueda, historial, conflictos y edición de ayudas (tN/tQ/tW).
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, BookOpen, Check, CheckCheck, Eye, EyeOff, History, Home, LayoutList, ListChecks, Pencil, Plus, Printer, Search, Settings as SettingsIcon, Upload, X } from "lucide-react";
+import { AlertTriangle, BookOpen, Check, CheckCheck, Download, Eye, EyeOff, History, Home, LayoutList, ListChecks, Pencil, Plus, Printer, Search, Settings as SettingsIcon, Upload, X } from "lucide-react";
 import {
   api,
   type ChunkData,
@@ -66,6 +66,20 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
   const sources = detail?.sources ?? [];
   const source: ResourceRow | undefined = sources[sourceIdx] ?? sources[0];
   const sourceReady = !!source && source.downloaded;
+  const [downloading, setDownloading] = useState(false);
+  const downloadCurrentSource = async () => {
+    if (!source) return;
+    setDownloading(true);
+    try {
+      await api.downloadSource(source.language_slug, source.project_slug, source.slug);
+      fb.toast(t("common.downloaded"), "success");
+      setRefresh((r) => r + 1);
+    } catch (e) {
+      fb.error(String(e).includes("403") || String(e).includes("anti-bot") ? t("library.cdn_blocked") : e);
+    } finally {
+      setDownloading(false);
+    }
+  };
   const chapters = detail?.chapters ?? [];
   const current = chapters.find((c) => c.id === chapter);
   const bookLabel = detail ? `${bookTitleLabel} · ${detail.manifest.target_language.name}` : "";
@@ -150,17 +164,18 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
           })}
         </div>
 
-        {!sourceReady && !isHelps ? (
-          <div className="welcome">
-            <div className="card elevated" style={{ padding: 0 }}>
-              <div className="empty">
-                <span className="icon-badge"><BookOpen size={28} /></span>
-                <h2>{t("translate.no_source")}</h2>
-                <Button variant="primary" onClick={() => setShowSources(true)}>{t("translate.edit_source")}</Button>
-              </div>
+        {!sourceReady && !isHelps && (
+          <div className="source-banner">
+            <BookOpen size={18} />
+            <div className="grow">
+              <strong>{source ? t("translate.source_not_downloaded", { name: `${source.language_name} · ${source.name}` }) : t("translate.no_source")}</strong>
+              <div className="small muted">{t("translate.no_source_hint")}</div>
             </div>
+            {source && <Button size="sm" variant="primary" busy={downloading} onClick={downloadCurrentSource}><Download size={14} /> {t("common.download")}</Button>}
+            <Button size="sm" onClick={() => setShowSources(true)}>{t("translate.edit_source")}</Button>
           </div>
-        ) : current ? (
+        )}
+        {current ? (
           <ChapterView
             key={`${chapter}-${mode}-${source?.language_slug}-${source?.slug}-${refresh}`}
             detail={detail}
