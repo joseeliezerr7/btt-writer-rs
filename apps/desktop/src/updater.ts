@@ -11,9 +11,12 @@ export interface UpdateInfo {
   install: (onProgress?: (percent: number | null) => void) => Promise<void>;
 }
 
+/** En Android/iOS no hay actualizador integrado: cada versión se instala desde su APK/tienda. */
+export const updaterAvailable = isTauri && typeof navigator !== "undefined" && !/Android|iPhone|iPad/i.test(navigator.userAgent);
+
 /** Devuelve la actualización disponible, o null si ya estamos al día (o no es la app nativa). */
 export async function checkForUpdate(): Promise<UpdateInfo | null> {
-  if (!isTauri) return null;
+  if (!updaterAvailable) return null;
   const { check } = await import("@tauri-apps/plugin-updater");
   const update = await check({ timeout: 15000 });
   if (!update) return null;

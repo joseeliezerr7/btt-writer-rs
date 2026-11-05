@@ -1,8 +1,7 @@
 // Aviso de versión nueva: comprobación automática al arrancar y botón manual en Ajustes.
 import { useEffect, useRef } from "react";
-import { isTauri } from "../api";
 import { useT } from "../i18n";
-import { checkForUpdate, relaunchApp } from "../updater";
+import { checkForUpdate, relaunchApp, updaterAvailable } from "../updater";
 import { useFeedback } from "./ui";
 
 /** Devuelve una función que busca actualizaciones y guía al usuario (confirmar, descargar, reiniciar). */
@@ -10,7 +9,7 @@ export function useUpdateCheck() {
   const fb = useFeedback();
   const { t } = useT();
   return async (manual: boolean) => {
-    if (!isTauri) {
+    if (!updaterAvailable) {
       if (manual) fb.toast(t("update.not_available_here"));
       return;
     }

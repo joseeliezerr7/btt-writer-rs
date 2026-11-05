@@ -71,7 +71,7 @@ database/       index.sqlite     resource_containers/   fuentes .tsrc
 exports/        USFM, HTML       settings.json  profile.json
 ```
 
-La primera vez se despliegan el `index.sqlite` y 11 contenedores (en/ru: Marcos, Génesis, tW…) empaquetados. Desde **Inicio → Más opciones → Migrar de la app anterior** se importan los proyectos de `~/BTT-Writer-2.0` o `~/BTT-Writer` sin tocar la carpeta original.
+La primera vez se despliegan el `index.sqlite` y los contenedores empaquetados en `containers.zip` (inglés: ULB/UDB/tN de todos los libros, tA y tW; español latinoamericano `es-419`: ULB, tN, tQ de todos los libros y tW), así que en español no hace falta descargar nada para empezar. En cada arranque se copian los que falten, de modo que una versión nueva añade contenedores también a instalaciones existentes. Desde **Inicio → Más opciones → Migrar de la app anterior** se importan los proyectos de `~/BTT-Writer-2.0` o `~/BTT-Writer` sin tocar la carpeta original.
 
 ## Funciones
 
