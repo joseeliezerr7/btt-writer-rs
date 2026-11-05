@@ -294,7 +294,7 @@ pub fn markers_from_s5(chapter: &Chapter) -> Vec<u32> {
 
 /// Extrae versos del texto de un chunk (`\v 1 ... \v 2 ...`).
 pub fn verses_of_chunk(text: &str) -> Vec<Verse> {
-    let split = re(r"\\v\s+(\d+[a-z]?(?:-\d+[a-z]?)?)\s*", &RE_VERSE_SPLIT);
+    let split = verse_marker_re();
     let mut out = vec![];
     let mut last: Option<(String, usize)> = None;
     for m in split.captures_iter(text) {
@@ -302,11 +302,41 @@ pub fn verses_of_chunk(text: &str) -> Vec<Verse> {
         if let Some((num, start)) = last.take() {
             out.push(Verse { number: num, text: text[start..whole.start()].trim().to_string() });
         }
-        last = Some((m[1].to_string(), whole.end()));
+        let num = m.get(1).or_else(|| m.get(2)).map(|g| g.as_str()).unwrap_or("0");
+        last = Some((num.to_string(), whole.end()));
     }
     if let Some((num, start)) = last {
         out.push(Verse { number: num, text: text[start..].trim().to_string() });
     }
+    out
+}
+
+/// Marcador de versículo. Un sufijo de letra (`\v 1a`) solo cuenta como parte
+/// del número si va seguido de espacio o fin de texto; si no, es texto pegado
+/// (`\v 1texto` → versículo 1 y texto "texto").
+fn verse_marker_re() -> &'static Regex {
+    re(r"\\v\s+(?:(\d+[a-z]?(?:-\d+[a-z]?)?)(?:\s+|$)|(\d+(?:-\d+)?))", &RE_VERSE_SPLIT)
+}
+
+/// Separa lo que quede pegado a un marcador de versículo: `hola\v 2` →
+/// `hola \v 2` y `\v 2texto` → `\v 2 texto`. El texto correcto no cambia.
+pub fn tidy_verse_markers(text: &str) -> String {
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut cursor = 0;
+    for m in verse_marker_re().captures_iter(text) {
+        let whole = m.get(0).unwrap();
+        out.push_str(&text[cursor..whole.start()]);
+        if !out.is_empty() && !out.ends_with(char::is_whitespace) {
+            out.push(' ');
+        }
+        out.push_str(whole.as_str());
+        // Alternativa 2: número seguido de algo que no es espacio.
+        if m.get(2).is_some() && text[whole.end()..].chars().next().is_some_and(|c| !c.is_whitespace()) {
+            out.push(' ');
+        }
+        cursor = whole.end();
+    }
+    out.push_str(&text[cursor..]);
     out
 }
 
@@ -396,7 +426,7 @@ pub fn export_book(project: &Project) -> Result<String> {
                 continue;
             }
             let text = project.read_chunk(&ch, &chunk)?;
-            let text = text.replace("\r\n", "\n");
+            let text = tidy_verse_markers(&text.replace("\r\n", "\n"));
             let text = strip_chapter_marker(text.trim());
             if text.is_empty() {
                 continue;
@@ -493,6 +523,16 @@ mod tests {
         let each = split_into_chunks(&b.chapters[1], &[]);
         assert_eq!(each.len(), 1);
         assert!(each[0].text.starts_with("\\q1 Verso poético\n\\v 1"));
+    }
+
+    #[test]
+    fn pegado_al_marcador_no_forma_parte_del_numero() {
+        let v = verses_of_chunk("\\v 1texto uno \\v 2a dos \\v 3-4b tres");
+        assert_eq!(v.iter().map(|x| x.number.as_str()).collect::<Vec<_>>(), vec!["1", "2a", "3-4b"]);
+        assert_eq!(v[0].text, "texto uno");
+        assert_eq!(verse_numbers("\\v 12abc \\v 13."), vec![12, 13]);
+        assert_eq!(tidy_verse_markers("hola\\v 2texto \\v 3 bien \\v 4a ok"), "hola \\v 2 texto \\v 3 bien \\v 4a ok");
+        assert_eq!(tidy_verse_markers("\\v 1 a\n\\v 2 b"), "\\v 1 a\n\\v 2 b");
     }
 
     #[test]

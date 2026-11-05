@@ -2,12 +2,13 @@
 // importar, exportar, biblioteca, respaldos, migración, comentarios.
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
-import { open as openDialog } from "@tauri-apps/plugin-dialog";
+import { open as openDialog, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { openPath, openUrl } from "@tauri-apps/plugin-opener";
-import { Archive, Check, Cloud, Database, Download, FileText, FileUp, FolderOpen, HardDriveDownload, Languages, Printer, RefreshCw, Server, Trash2, UploadCloud, UserPlus } from "lucide-react";
+import { Archive, ArrowRight, Check, Cloud, Database, Download, FileText, FileUp, FolderOpen, HardDriveDownload, Languages, Printer, RefreshCw, Server, Trash2, UploadCloud, UserPlus } from "lucide-react";
 import {
   api,
   DEFAULT_PRINT,
+  isMobile,
   isTauri,
   resourceLabel,
   type CategoryRow,
@@ -40,6 +41,59 @@ export function importStatusText(t: (k: string) => string, o: ImportOutcome): st
 
 export const bookName = (p: { project_id: string; project_name: string }, books?: ProjectRow[]) =>
   books?.find((b) => b.slug === p.project_id)?.name || p.project_name || p.project_id.toUpperCase();
+
+// ---------------------------------------------------------------- cuenta del servidor
+
+/** Inicio de sesión en WACS sin salir de la pantalla actual (conserva el nombre local). */
+export function ServerLoginDialog({ onClose, onDone }: { onClose: () => void; onDone?: () => void }) {
+  const { t } = useT();
+  const { setProfile } = useApp();
+  const fb = useFeedback();
+  const [user, setUser] = useState("");
+  const [pass, setPass] = useState("");
+  const [busy, setBusy] = useState(false);
+  const login = async () => {
+    if (!user.trim() || !pass) return;
+    setBusy(true);
+    try {
+      const p = await api.wacsLogin(user.trim(), pass);
+      setProfile(p);
+      fb.toast(t("profile.connected_as", { user: p.session?.user.username ?? user.trim() }), "success");
+      onDone?.();
+      onClose();
+    } catch (e) {
+      fb.error(e);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Dialog
+      title={t("profile.connect_server")}
+      narrow
+      onClose={onClose}
+      footer={<><Button onClick={onClose}>{t("common.cancel")}</Button><Button variant="primary" busy={busy} disabled={!user.trim() || !pass} onClick={login}>{t("common.continue")} <ArrowRight size={14} /></Button></>}
+    >
+      <div className="col">
+        <p className="muted small" style={{ margin: 0 }}>{t("profile.connect_desc")}</p>
+        <Field label={t("profile.username")}><input className="input" value={user} autoFocus autoComplete="username" onChange={(e) => setUser(e.target.value)} /></Field>
+        <Field label={t("profile.password")}><input className="input" type="password" value={pass} autoComplete="current-password" onChange={(e) => setPass(e.target.value)} onKeyDown={(e) => e.key === "Enter" && login()} /></Field>
+      </div>
+    </Dialog>
+  );
+}
+
+/** Pregunta dónde guardar (escritorio). En el móvil o fuera de Tauri devuelve "" para usar la carpeta de exportaciones. */
+async function pickSavePath(title: string, defaultName: string, ext: string[]): Promise<string | null> {
+  if (!isTauri || isMobile) return "";
+  try {
+    const p = await saveDialog({ title, defaultPath: defaultName, filters: [{ name: ext[0].toUpperCase(), extensions: ext }] });
+    if (p === null) return null;
+    return ext.some((e) => p.toLowerCase().endsWith("." + e)) ? p : `${p}.${ext[0]}`;
+  } catch {
+    return "";
+  }
+}
 
 // ---------------------------------------------------------------- colaboradores
 
@@ -203,7 +257,7 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
   const { t, lang } = useT();
   const { settings } = useApp();
   const fb = useFeedback();
-  const [step, setStep] = useState<"language" | "project" | "type">("language");
+  const [step, setStep] = useState<"language" | "project" | "type" | "source">("language");
   const [langQuery, setLangQuery] = useState("");
   const [langs, setLangs] = useState<TargetLanguageRow[]>([]);
   const [language, setLanguage] = useState<TargetLanguageRow | null>(null);
@@ -213,8 +267,14 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
   const [book, setBook] = useState<ProjectRow | null>(null);
   const [existing, setExisting] = useState<ProjectItem[]>([]);
   const [busy, setBusy] = useState(false);
+  // Tipo elegido (o el implícito) a la espera de la fuente.
+  const [pending, setPending] = useState<{ type: string; resource: string } | null>(null);
+  const [sourceRows, setSourceRows] = useState<ResourceRow[] | null>(null);
+  const [chosen, setChosen] = useState<{ language: string; resource: string } | null>(null);
+  const [downloading, setDownloading] = useState<string | null>(null);
   const dq = useDebounced(langQuery, 200);
   const uiLang = lang === "es" ? "es-419" : "en";
+  const glMode = settings.gateway_language_mode;
 
   useEffect(() => {
     let alive = true;
@@ -230,7 +290,7 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
   const exists = (type: string, resource: string) =>
     !!language && !!book && existing.some((p) => p.language_id === language.slug && p.project_id === book.slug && p.type_id === type && (type !== "text" || p.resource_id === resource));
 
-  const create = async (type: string, resource: string) => {
+  const create = async (type: string, resource: string, source: { language: string; resource: string } | null) => {
     if (!language || !book) return;
     if (exists(type, resource)) {
       fb.toast(t("new.exists"), "error");
@@ -239,6 +299,7 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
     setBusy(true);
     try {
       const id = await api.createProject({ language: language.slug, project: book.slug, type, resource });
+      if (source) await api.setProjectSources(id, [source]).catch(fb.error);
       onCreated(id);
     } catch (e) {
       fb.error(e);
@@ -247,19 +308,50 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
     }
   };
 
+  /** Paso 3 (o 4): carga las fuentes del libro y preselecciona la primera descargada (en/ulb preferida). */
+  const loadSources = (b: ProjectRow) => {
+    setSourceRows(null);
+    setChosen(null);
+    return api.availableSources(b.slug, glMode).then((rows) => {
+      const sorted = [...rows].sort((x, y) => Number(!x.downloaded) - Number(!y.downloaded) || Number(x.language_slug !== "en") - Number(y.language_slug !== "en") || Number(x.slug !== "ulb") - Number(y.slug !== "ulb"));
+      setSourceRows(sorted);
+      const first = sorted.find((r) => r.downloaded);
+      if (first) setChosen({ language: first.language_slug, resource: first.slug });
+    }).catch(fb.error);
+  };
+  const goSource = (b: ProjectRow, type: string, resource: string) => {
+    setPending({ type, resource });
+    setStep("source");
+    loadSources(b);
+  };
+
   const pickBook = (b: ProjectRow) => {
     setBook(b);
     const isTw = b.slug === "bible" || b.slug === "bible-obs";
-    if (isTw) return create("tw", "");
-    if (b.slug === "obs") return create("text", "obs");
-    if (settings.gateway_language_mode) setStep("type");
-    else create("text", "reg");
+    if (isTw) return create("tw", "", null);
+    if (b.slug === "obs") return goSource(b, "text", "obs");
+    if (glMode) setStep("type");
+    else goSource(b, "text", "reg");
+  };
+
+  const downloadRow = async (r: ResourceRow) => {
+    setDownloading(r.language_slug + r.slug);
+    try {
+      await api.downloadSource(r.language_slug, r.project_slug, r.slug);
+      fb.toast(t("common.downloaded"), "success");
+      if (book) await loadSources(book);
+      setChosen({ language: r.language_slug, resource: r.slug });
+    } catch (e) {
+      fb.error(String(e).includes("403") || String(e).includes("anti-bot") ? t("library.cdn_blocked") : e);
+    } finally {
+      setDownloading(null);
+    }
   };
 
   const filteredBooks = useMemo(() => {
     const q = bookQuery.trim().toLowerCase();
-    return books.filter((b) => (settings.gateway_language_mode || !["bible", "bible-obs"].includes(b.slug)) && (!q || b.name.toLowerCase().includes(q) || b.slug.includes(q)));
-  }, [books, bookQuery, settings.gateway_language_mode]);
+    return books.filter((b) => (glMode || !["bible", "bible-obs"].includes(b.slug)) && (!q || b.name.toLowerCase().includes(q) || b.slug.includes(q)));
+  }, [books, bookQuery, glMode]);
 
   const catName = (slug: string) => cats.find((c) => c.slug === slug)?.name || (slug === "bible-ot" ? t("new.ot") : slug === "bible-nt" ? t("new.nt") : t("new.other"));
   const groups = useMemo(() => {
@@ -269,12 +361,21 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
     return Object.entries(g).sort(([a], [b]) => order(a) - order(b));
   }, [filteredBooks, cats]);
 
+  const stepOrder: ("language" | "project" | "type" | "source")[] = glMode ? ["language", "project", "type", "source"] : ["language", "project", "source"];
+  const stepLabel = { language: t("new.step.language"), project: t("new.step.project"), type: t("new.step.type"), source: t("new.step.source") };
+  const cur = stepOrder.indexOf(step);
+  const sourceLabel = (r: ResourceRow) => `${r.language_name} (${r.language_slug}) - ${r.name}`;
+  const downloaded = (sourceRows ?? []).filter((r) => r.downloaded);
+  const online = (sourceRows ?? []).filter((r) => !r.downloaded);
+  const isChosen = (r: ResourceRow) => chosen?.language === r.language_slug && chosen?.resource === r.slug;
+  const typeLabel = (p: { type: string; resource: string }) => (p.type === "text" ? t(`resource.${p.resource}`) : p.type === "tn" ? t("type.notes") : p.type === "tq" ? t("type.questions") : p.type);
+
   return (
     <Dialog title={t("new.title")} onClose={onClose} wide>
       <ol className="steps">
-        <li className={step === "language" ? "cur" : "done"}><span className="n">{step === "language" ? 1 : <Check size={13} />}</span>{t("new.step.language")}</li>
-        <li className={step === "project" ? "cur" : step === "type" ? "done" : ""}><span className="n">{step === "type" ? <Check size={13} /> : 2}</span>{t("new.step.project")}</li>
-        {settings.gateway_language_mode && <li className={step === "type" ? "cur" : ""}><span className="n">3</span>{t("new.step.type")}</li>}
+        {stepOrder.map((s, i) => (
+          <li key={s} className={i === cur ? "cur" : i < cur ? "done" : ""}><span className="n">{i < cur ? <Check size={13} /> : i + 1}</span>{stepLabel[s]}</li>
+        ))}
       </ol>
       {step === "language" && (
         <div className="col">
@@ -335,12 +436,55 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
               const has = exists(o.type, o.resource);
               const needsText = (o.type === "tn" || o.type === "tq") && !existing.some((p) => p.language_id === language.slug && p.project_id === book.slug && p.type_id === "text");
               return (
-                <div key={o.type + o.resource} className={"list-item" + (has || needsText ? " disabled" : "")} onClick={() => !has && !needsText && create(o.type, o.resource)}>
+                <div key={o.type + o.resource} className={"list-item" + (has || needsText ? " disabled" : "")} onClick={() => !has && !needsText && goSource(book, o.type, o.resource)}>
                   <span className="grow">{o.label}</span>
                   {has && <span className="badge">{t("new.exists")}</span>}
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+      {step === "source" && language && book && pending && (
+        <div className="col">
+          <div className="row wrap">
+            <span className="badge">{language.name}</span>
+            <span className="badge">{book.name}</span>
+            <span className="badge">{typeLabel(pending)}</span>
+            <Button size="sm" variant="ghost" onClick={() => setStep(glMode && pending.resource !== "obs" ? "type" : "project")}>{t("details.change")}</Button>
+          </div>
+          <h3 style={{ margin: ".2rem 0 0" }}>{t("new.choose_source")}</h3>
+          <p className="muted small" style={{ margin: 0 }}>{t("new.source_hint")}</p>
+          {sourceRows === null ? (
+            <Spinner />
+          ) : (
+            <>
+              <h4 className="muted small">{t("sources.available")}</h4>
+              <div className="card list">
+                {downloaded.map((r) => (
+                  <div key={sourceLabel(r)} className={"list-item" + (isChosen(r) ? " selected" : "")} onClick={() => setChosen(isChosen(r) ? null : { language: r.language_slug, resource: r.slug })}>
+                    {isChosen(r) ? <Check size={16} /> : <span style={{ width: 16 }} />}
+                    <span className="grow">{sourceLabel(r)}</span>
+                    <span className="badge ok">{t("common.downloaded")}</span>
+                  </div>
+                ))}
+                {downloaded.length === 0 && <div className="list-item muted small">{t("new.no_sources_downloaded")}</div>}
+              </div>
+              <h4 className="muted small">{t("sources.online")}</h4>
+              <div className="card list" style={{ maxHeight: 220, overflow: "auto" }}>
+                {online.map((r) => (
+                  <div key={sourceLabel(r)} className="list-item">
+                    <span className="grow">{sourceLabel(r)} <span className="muted small">v{r.version}</span></span>
+                    <Button size="sm" busy={downloading === r.language_slug + r.slug} onClick={() => downloadRow(r)}><Download size={14} /> {t("common.download")}</Button>
+                  </div>
+                ))}
+                {online.length === 0 && <div className="list-item muted small">{t("sources.none_online")}</div>}
+              </div>
+            </>
+          )}
+          <div className="row" style={{ justifyContent: "flex-end", marginTop: ".4rem" }}>
+            <Button variant="ghost" disabled={busy} onClick={() => create(pending.type, pending.resource, null)}>{t("new.skip_source")}</Button>
+            <Button variant="primary" busy={busy} disabled={!chosen} onClick={() => create(pending.type, pending.resource, chosen)}>{t("new.create")} <ArrowRight size={14} /></Button>
           </div>
         </div>
       )}
@@ -491,14 +635,12 @@ export function SourceSelectionDialog({ detail, onClose, onChanged }: { detail: 
 
 export function ExportDialog({ project, onClose, onReview }: { project: ProjectItem; onClose: () => void; onReview?: (files: string[]) => void }) {
   const { t } = useT();
-  const { profile, setProfile } = useApp();
+  const { profile } = useApp();
   const fb = useFeedback();
   const [busy, setBusy] = useState<string | null>(null);
   const [result, setResult] = useState<ReactNode>(null);
   const [login, setLogin] = useState(false);
   const [showPrint, setShowPrint] = useState(false);
-  const [user, setUser] = useState("");
-  const [pass, setPass] = useState("");
 
   const run = async (kind: string, fn: () => Promise<ReactNode>) => {
     setBusy(kind);
@@ -545,22 +687,21 @@ export function ExportDialog({ project, onClose, onReview }: { project: ProjectI
     });
   };
 
-  const doLogin = async () => {
-    setBusy("login");
-    try {
-      setProfile(await api.wacsLogin(user.trim(), pass));
-      setLogin(false);
-      fb.toast(t("common.done"), "success");
-    } catch (e) {
-      fb.error(e);
-    } finally {
-      setBusy(null);
-    }
-  };
-
   const saved = (path: string) => (
     <p>{t("export.saved_to")} <a href="#" onClick={(e) => { e.preventDefault(); openPath(path).catch(fb.error); }}>{path}</a></p>
   );
+
+  // Cada exportación pregunta dónde guardar (en escritorio); cancelar no hace nada.
+  const exportUsfm = async () => {
+    const dest = await pickSavePath(t("export.save_usfm"), `${project.language_id}_${project.project_id.toUpperCase()}.usfm`, ["usfm", "txt", "sfm"]);
+    if (dest === null) return;
+    run("usfm", async () => saved(await api.exportUsfm(project.id, dest)));
+  };
+  const exportTstudio = async () => {
+    const dest = await pickSavePath(t("export.save_tstudio"), `${project.id}.tstudio`, ["tstudio"]);
+    if (dest === null) return;
+    run("tstudio", async () => saved(await api.exportTstudio(project.id, dest)));
+  };
 
   return (
     <Dialog title={t("export.title")} onClose={onClose}>
@@ -568,24 +709,14 @@ export function ExportDialog({ project, onClose, onReview }: { project: ProjectI
         <div className="card list">
           <OptionItem icon={<UploadCloud size={18} />} title={t("export.upload")} description={`${t("export.upload_desc")} ${profile.session ? `· ${profile.session.user.username}` : `· ${t("export.need_login")}`}`} onClick={upload} busy={busy === "upload"} />
           {project.type_id === "text" && project.resource_id !== "obs" && (
-            <OptionItem icon={<FileText size={18} />} tone="accent" title={t("export.usfm")} onClick={() => run("usfm", async () => saved(await api.exportUsfm(project.id)))} busy={busy === "usfm"} />
+            <OptionItem icon={<FileText size={18} />} tone="accent" title={t("export.usfm")} onClick={exportUsfm} busy={busy === "usfm"} />
           )}
           {project.type_id === "text" && <OptionItem icon={<Printer size={18} />} tone="neutral" title={t("export.pdf")} onClick={() => setShowPrint(true)} />}
-          <OptionItem icon={<Archive size={18} />} tone="success" title={t("export.tstudio")} onClick={() => run("tstudio", async () => saved(await api.exportTstudio(project.id)))} busy={busy === "tstudio"} />
+          <OptionItem icon={<Archive size={18} />} tone="success" title={t("export.tstudio")} onClick={exportTstudio} busy={busy === "tstudio"} />
         </div>
-        {login && (
-          <div className="card pad col">
-            <h3>{t("profile.connect")}</h3>
-            <Field label={t("profile.username")}><input className="input" value={user} onChange={(e) => setUser(e.target.value)} /></Field>
-            <Field label={t("profile.password")}><input className="input" type="password" value={pass} onChange={(e) => setPass(e.target.value)} onKeyDown={(e) => e.key === "Enter" && doLogin()} /></Field>
-            <div className="row" style={{ justifyContent: "flex-end" }}>
-              <Button onClick={() => setLogin(false)}>{t("common.cancel")}</Button>
-              <Button variant="primary" busy={busy === "login"} onClick={doLogin}>{t("common.continue")}</Button>
-            </div>
-          </div>
-        )}
         {result && <div className="card pad">{result}</div>}
       </div>
+      {login && <ServerLoginDialog onClose={() => setLogin(false)} />}
       {showPrint && <PrintDialog id={project.id} isObs={project.resource_id === "obs"} onClose={() => setShowPrint(false)} />}
     </Dialog>
   );

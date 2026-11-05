@@ -150,22 +150,50 @@ pub struct ChunkValidation {
     pub issues: Vec<Issue>,
 }
 
-/// Valida todo un proyecto de texto contra su fuente (para "Publicar").
+/// Valida todo un proyecto contra su fuente (para "Publicar" y "Marcar todos").
+/// Recorre las mismas tarjetas que ve el usuario: el título del libro, el título
+/// (y la referencia en OBS) de cada capítulo y los chunks de versículos.
 pub fn validate_project(project: &Project, source: Option<&ResourceContainer>) -> crate::Result<Vec<ChunkValidation>> {
     let mut out = vec![];
-    let is_text = project.manifest.type_.id == "text";
-    let chapters: Vec<String> = match source {
+    let m = &project.manifest;
+    let is_text = m.type_.id == "text";
+    let is_tw = m.type_.id == "tw";
+    let title_only = |text: &str| if text.trim().is_empty() { vec![Issue::Empty] } else { vec![] };
+    if !is_tw {
+        let title = project.read_book_title()?;
+        out.push(ChunkValidation { chapter: "front".into(), chunk: "title".into(), finished: m.is_chunk_finished("front", "title"), issues: title_only(&title) });
+    }
+    let mut chapters: Vec<String> = match source {
         Some(rc) => rc.chapters(),
-        None => project.chapters()?,
+        None => vec![],
     };
+    for ch in project.chapters()? {
+        if !chapters.contains(&ch) {
+            chapters.push(ch);
+        }
+    }
+    chapters.sort_by(|a, b| crate::project::natural_cmp(a, b));
     for ch in chapters {
-        let chunks: Vec<String> = match source {
-            Some(rc) => rc.chunks(&ch),
-            None => project.chunks(&ch)?.into_iter().filter(|c| c != "title" && c != "reference").collect(),
-        };
+        let mut chunks: Vec<String> = vec![];
+        if !is_tw {
+            chunks.push("title".into());
+            if m.resource.id == "obs" {
+                chunks.push("reference".into());
+            }
+        }
+        if let Some(rc) = source {
+            chunks.extend(rc.chunks(&ch));
+        }
+        for c in project.chunks(&ch)? {
+            if !chunks.contains(&c) && (is_tw || (c != "title" && c != "reference")) {
+                chunks.push(c);
+            }
+        }
         for c in chunks {
             let text = project.read_chunk(&ch, &c)?;
-            let issues = if is_text && project.manifest.resource.id != "obs" {
+            let issues = if !is_tw && (c == "title" || c == "reference") {
+                title_only(&text)
+            } else if is_text && project.manifest.resource.id != "obs" {
                 let expected: Vec<u32> = source
                     .and_then(|rc| rc.source_chunk(&ch, &c))
                     .map(|sc| {
@@ -188,12 +216,7 @@ pub fn validate_project(project: &Project, source: Option<&ResourceContainer>) -
             } else {
                 vec![Issue::Empty]
             };
-            out.push(ChunkValidation {
-                chapter: ch.clone(),
-                chunk: c.clone(),
-                finished: project.manifest.is_chunk_finished(&ch, &c),
-                issues,
-            });
+            out.push(ChunkValidation { chapter: ch.clone(), chunk: c.clone(), finished: m.is_chunk_finished(&ch, &c), issues });
         }
     }
     Ok(out)

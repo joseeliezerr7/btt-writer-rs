@@ -527,3 +527,42 @@ mark { background: #ffe58a; color: inherit; border-radius: 2px; }
 /* Historial de un chunk */
 .history-item { align-items: center; }
 .history-preview { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: block; }
+
+/* Inicio: búsqueda, selección múltiple y menú de cuenta */
+.search-field { position: relative; display: flex; align-items: center; flex: 1 1 220px; min-width: 180px; max-width: 420px; color: var(--muted); }
+.search-field > svg { position: absolute; left: .7rem; pointer-events: none; }
+.search-field .input { padding-left: 2.1rem; padding-right: 2rem; min-height: 34px; padding-top: .35rem; padding-bottom: .35rem; font-size: .9rem; }
+.search-field .clear { position: absolute; right: .35rem; width: 26px; height: 26px; border: 0; border-radius: 50%; background: transparent; color: var(--muted); cursor: pointer; display: grid; place-items: center; }
+.search-field .clear:hover { background: var(--surface-3); color: var(--text); }
+.selection-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .6rem; padding: .55rem .9rem; margin-bottom: .8rem; position: sticky; top: .5rem; z-index: 5; min-width: 0; border-color: color-mix(in srgb, var(--primary) 45%, var(--border)); background: color-mix(in srgb, var(--primary-soft) 70%, var(--surface)); }
+.project-row.selected { background: var(--primary-soft); }
+.select-box { display: grid; place-items: center; width: 44px; height: 44px; color: var(--muted); }
+.select-box.on { color: var(--primary); }
+.delete-list { margin: 0; padding-left: 1.2rem; max-height: 220px; overflow: auto; }
+.delete-list li { margin: .15rem 0; }
+.user-chip { cursor: pointer; color: var(--text); font-family: inherit; transition: background .12s, border-color .12s; }
+.user-chip:hover, .user-chip.open { background: var(--surface-3); border-color: var(--border-strong); }
+.user-chip .user-state { color: var(--muted); }
+.user-chip .user-state.online { color: var(--success); }
+.user-menu { min-width: 280px; }
+.menu .menu-head { display: flex; align-items: center; gap: .7rem; padding: .6rem .7rem .4rem; }
+
+/* Modo "Mover versículos" */
+.verse-chip.picked { border-style: solid; background: var(--primary); color: #fff; box-shadow: 0 0 0 3px var(--primary-soft); }
+.verse-chips.drop-remove { background: var(--danger-soft); border-bottom-color: var(--danger); border-radius: 8px; }
+.verse-arranger { flex: 1; min-height: 140px; line-height: 2.1; padding: .2rem 0; word-break: break-word; }
+.verse-arranger .va-word { display: inline; border-radius: 4px; padding: .05rem .05rem; }
+.verse-arranger.active .va-word { cursor: pointer; }
+.verse-arranger.active .va-word:hover { background: var(--surface-3); }
+.verse-arranger .va-marker { display: inline-grid; place-items: center; min-width: 26px; height: 24px; padding: 0 .45rem; margin: 0 .15rem; border-radius: 999px; background: var(--primary-soft); color: var(--primary); border: 1.5px solid var(--primary); font-family: var(--font-ui); font-size: .78rem; font-weight: 800; vertical-align: middle; cursor: grab; user-select: none; transition: transform .1s, background .12s; }
+.verse-arranger .va-marker:hover { transform: translateY(-1px); background: color-mix(in srgb, var(--primary) 18%, var(--surface)); }
+.verse-arranger .va-marker:active { cursor: grabbing; }
+.verse-arranger .va-marker.picked { background: var(--primary); color: #fff; box-shadow: 0 0 0 3px var(--primary-soft); }
+.verse-arranger .va-gap { display: inline-block; width: .35em; height: 1.25em; margin: 0 .02em; vertical-align: middle; border-radius: 3px; transition: width .1s, background .1s; }
+.verse-arranger.active .va-gap { width: .6em; background: color-mix(in srgb, var(--primary) 18%, transparent); border: 1px dashed color-mix(in srgb, var(--primary) 55%, transparent); cursor: pointer; }
+.verse-arranger .va-gap.over, .verse-arranger.active .va-gap:hover { width: 1.1em; background: var(--primary); border-color: var(--primary); }
+.rtl.verse-arranger { direction: rtl; }
+@media (max-width: 900px) {
+  .selection-bar { position: static; }
+  .user-chip > .ellipsis { max-width: 110px; }
+}

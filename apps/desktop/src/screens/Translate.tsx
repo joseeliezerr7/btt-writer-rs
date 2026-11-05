@@ -1,7 +1,7 @@
 // Pantalla de traducción: modos lectura / chunk / revisión, fuentes, recursos,
 // búsqueda, historial, conflictos y edición de ayudas (tN/tQ/tW).
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, BookOpen, Check, CheckCheck, Download, Eye, EyeOff, History, Home, LayoutList, ListChecks, Pencil, Plus, Printer, Search, Settings as SettingsIcon, Upload, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
+import { AlertTriangle, BookOpen, Check, CheckCheck, Download, Eye, EyeOff, History, Home, LayoutList, ListChecks, Move, Pencil, Plus, Printer, Search, Settings as SettingsIcon, Upload, X } from "lucide-react";
 import {
   api,
   type ChunkData,
@@ -18,6 +18,7 @@ import { useApp } from "../app-context";
 import { formatDate, useT } from "../i18n";
 import { Button, Dialog, IconBadge, Logo, SimpleMarkdown, Spinner, Switch, Tabs, useFeedback } from "../components/ui";
 import { bookName, DownloadLanguageButton, ExportDialog, issueText, PrintDialog, SourceSelectionDialog } from "../components/dialogs";
+import { MARKER_MIME, normalizeVerseMarkers, removeMarker, VerseArranger } from "../components/verses";
 
 type Mode = "read" | "chunk" | "review";
 
@@ -452,6 +453,13 @@ function ChunkCard(props: {
   const [sourceWord, setSourceWord] = useState<WordArticle | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const textRef = useRef<HTMLTextAreaElement>(null);
+  // Modo "Mover versículos": el texto se muestra como palabras y fichas arrastrables.
+  const [arrange, setArrange] = useState(false);
+  // Versículo de la barra elegido con un toque, a la espera de tocar dónde va.
+  const [pickedNew, setPickedNew] = useState<number | null>(null);
+  const [overChips, setOverChips] = useState(false);
+  // Posición del cursor a restaurar tras una normalización que añadió espacios.
+  const caretFix = useRef<number | null>(null);
 
   const reload = useCallback(() => api.readChunk(id, chapter, chunk.id).then((d) => { setData(d); setText(d.text); }).catch(fb.error), [id, chapter, chunk.id]);
   useEffect(() => {
@@ -542,6 +550,21 @@ function ChunkCard(props: {
     setTimeout(() => textRef.current?.focus(), 50);
   };
 
+  /** Lo escrito en el área de texto, separando lo que quede pegado a un marcador `\v`. */
+  const onEditorChange = (e: ChangeEvent<HTMLTextAreaElement>) => {
+    const el = e.target;
+    const fixed = normalizeVerseMarkers(el.value, el.selectionStart ?? el.value.length);
+    if (fixed.text !== el.value) caretFix.current = fixed.caret;
+    save(fixed.text);
+  };
+  useEffect(() => {
+    const c = caretFix.current;
+    if (c !== null && textRef.current) {
+      caretFix.current = null;
+      textRef.current.setSelectionRange(c, c);
+    }
+  }, [text]);
+
   const insertFootnote = () => {
     const el = textRef.current;
     if (!el) return;
@@ -622,6 +645,11 @@ function ChunkCard(props: {
   const expected = data?.expected_verses ?? [];
   const placeholder = isTitle ? "" : expected.length ? expected.map((v) => `\\v ${v} `).join("") : t("translate.verses_hint");
   const canEdit = !data?.finished && (editing || !props.review || isHelps);
+  const arrangeBtn = canEdit && !isTitle && !isHelps && !data?.has_conflict ? (
+    <Button size="sm" variant={arrange ? "primary" : "ghost"} icon={!arrange} title={t("translate.arrange")} onClick={() => { setArrange((a) => !a); setPickedNew(null); }}>
+      <Move size={14} />{arrange ? ` ${t("common.done")}` : null}
+    </Button>
+  ) : null;
 
   return (
     <div className={"chunk-card" + (showHelps ? " with-helps" : "")}>
@@ -650,13 +678,16 @@ function ChunkCard(props: {
             props.review ? (
               <>
                 {!data.finished && <Button size="sm" variant={editing ? "primary" : "ghost"} icon={!editing} title={t("translate.chunk")} onClick={() => (editing ? setEditing(false) : startEdit())}>{editing ? t("common.done") : <Pencil size={14} />}</Button>}
-                {editing && !isHelps && <Button size="sm" variant="ghost" title={t("translate.add_footnote")} onClick={insertFootnote}>ƒ</Button>}
+                {editing && !isHelps && !arrange && <Button size="sm" variant="ghost" title={t("translate.add_footnote")} onClick={insertFootnote}>ƒ</Button>}
+                {editing && arrangeBtn}
                 <Button size="sm" variant="ghost" icon title={t("translate.history")} onClick={openHistory}><History size={14} /></Button>
                 <Switch on={data.finished} onChange={toggleDone} label={<span className="small">{t("translate.done")}</span>} />
               </>
             ) : data.finished ? (
               <Button size="sm" variant="ghost" icon title={t("translate.chunk")} onClick={startEdit}><Pencil size={14} /></Button>
-            ) : null
+            ) : (
+              arrangeBtn
+            )
           )}
         </div>
 
@@ -699,7 +730,14 @@ function ChunkCard(props: {
         ) : canEdit ? (
           <>
             {!isTitle && !isHelps && expected.length > 0 && (
-              <div className="verse-chips" title={t("translate.verse_chips_hint")}>
+              <div
+                className={"verse-chips" + (overChips ? " drop-remove" : "")}
+                title={arrange ? t("translate.drop_to_remove") : t("translate.verse_chips_hint")}
+                // En modo "Mover versículos" la barra también sirve para quitar un marcador: se arrastra hasta aquí.
+                onDragOver={(e) => { if (e.dataTransfer.types.includes(MARKER_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (!overChips) setOverChips(true); } }}
+                onDragLeave={() => setOverChips(false)}
+                onDrop={(e) => { const idx = e.dataTransfer.getData(MARKER_MIME); setOverChips(false); if (idx !== "") { e.preventDefault(); save(removeMarker(text, Number(idx))); } }}
+              >
                 <span className="small muted" style={{ marginRight: ".2rem" }}>{t("translate.verse_chips")}</span>
                 {expected.map((v) => {
                   const used = versesInText.has(v);
@@ -707,11 +745,11 @@ function ChunkCard(props: {
                     <button
                       key={v}
                       type="button"
-                      className={"verse-chip" + (used ? " used" : "")}
+                      className={"verse-chip" + (used ? " used" : "") + (pickedNew === v ? " picked" : "")}
                       draggable={!used}
                       disabled={used}
                       onDragStart={(e) => { e.dataTransfer.setData("text/plain", `\\v ${v} `); e.dataTransfer.effectAllowed = "copy"; }}
-                      onClick={() => insertVerse(v)}
+                      onClick={() => (arrange ? setPickedNew((p) => (p === v ? null : v)) : insertVerse(v))}
                       title={used ? t("translate.verse_used", { n: v }) : t("translate.verse_insert", { n: v })}
                     >
                       {v}
@@ -720,16 +758,20 @@ function ChunkCard(props: {
                 })}
               </div>
             )}
-            <textarea
-              ref={textRef}
-              className={"editor" + (props.rtl ? " rtl" : "")}
-              value={text}
-              placeholder={placeholder}
-              onChange={(e) => save(e.target.value)}
-              onFocus={() => { if (!props.review) setEditing(true); }}
-              onDragOver={(e) => { if (e.dataTransfer.types.includes("text/plain")) e.dataTransfer.dropEffect = "copy"; }}
-              spellCheck={false}
-            />
+            {arrange ? (
+              <VerseArranger text={text} rtl={props.rtl} onChange={(v) => save(v)} pickedNew={pickedNew} onPlacedNew={() => setPickedNew(null)} />
+            ) : (
+              <textarea
+                ref={textRef}
+                className={"editor" + (props.rtl ? " rtl" : "")}
+                value={text}
+                placeholder={placeholder}
+                onChange={onEditorChange}
+                onFocus={() => { if (!props.review) setEditing(true); }}
+                onDragOver={(e) => { if (e.dataTransfer.types.includes("text/plain")) e.dataTransfer.dropEffect = "copy"; }}
+                spellCheck={false}
+              />
+            )}
           </>
         ) : (
           <div className={"target-text" + (props.rtl ? " rtl" : "")} onDoubleClick={startEdit}>

@@ -186,31 +186,19 @@ pub struct ProjectListItem {
     last_backup: Option<u64>,
 }
 
-fn total_chunks(st: &AppState, project: &Project) -> usize {
+/// Total de tarjetas del proyecto y cuántas están terminadas. Cuenta exactamente
+/// las tarjetas que el usuario ve (título del libro, títulos de capítulo y chunks),
+/// así el "x / y" coincide con lo que hay en pantalla; los ids terminados que ya
+/// no existen (otra división de chunks) no se cuentan.
+fn chunk_counts(st: &AppState, project: &Project) -> (usize, usize) {
     let m = &project.manifest;
-    // Los chunks que el proyecto ya tiene en disco (pueden ser más que los de la
-    // fuente si se creó con otra división, p. ej. en la 1.6).
-    let on_disk: usize = project.chapters().unwrap_or_default().iter().map(|c| project.chunks(c).map(|x| x.len()).unwrap_or(0)).sum();
-    if m.type_.id == "tw" {
-        return on_disk.max(project.chunks("01").map(|c| c.len()).unwrap_or(0));
+    let mut total = 0;
+    let mut finished = 0;
+    for (ch, chunks) in card_ids(st, project) {
+        total += chunks.len();
+        finished += chunks.iter().filter(|c| m.is_chunk_finished(&ch, c)).count();
     }
-    // Fuente seleccionada → chunks del contenedor; si no, versificación del índice.
-    let mut expected = 0;
-    for s in &m.source_translations {
-        if let Ok(rc) = st.container(&s.language_id, source_project_slug(m), &s.resource_id) {
-            let n: usize = rc.chapters().iter().map(|c| rc.chunks(c).len()).sum();
-            if n > 0 {
-                expected = n;
-                break;
-            }
-        }
-    }
-    if expected == 0 {
-        let lib = st.library.lock().unwrap_or_else(|e| e.into_inner());
-        let markers = lib.chunk_markers(&m.project.id).unwrap_or_default();
-        expected = markers.values().map(|v| v.len()).sum();
-    }
-    expected.max(on_disk)
+    (total, finished)
 }
 
 fn list_item(st: &AppState, p: &Project) -> ProjectListItem {
@@ -221,8 +209,9 @@ fn list_item(st: &AppState, p: &Project) -> ProjectListItem {
         let lang = if ui_lang == "es" { "es-419" } else { "en" };
         summary.project_name = st.library.lock().unwrap_or_else(|e| e.into_inner()).project_name(&summary.project_id, lang);
     }
-    let total = total_chunks(st, p);
-    let progress = if total == 0 { 0.0 } else { (summary.finished_chunks as f32 / total as f32).min(1.0) };
+    let (total, finished) = chunk_counts(st, p);
+    summary.finished_chunks = finished;
+    let progress = if total == 0 { 0.0 } else { (finished as f32 / total as f32).min(1.0) };
     let last_backup = st.backup_state.lock().unwrap_or_else(|e| e.into_inner()).last_time.get(&summary.id).copied();
     ProjectListItem { summary, total_chunks: total, progress, has_conflicts: scan.has_conflicts, last_backup }
 }
@@ -270,27 +259,23 @@ pub struct ProjectDetail {
     book_title: String,
 }
 
-/// Estructura de capítulos/chunks: unión de la fuente principal y lo que hay en disco.
-fn chapter_structure(st: &AppState, project: &Project) -> R<Vec<ChapterInfo>> {
+/// Ids de las tarjetas del proyecto por capítulo (ordenados): unión de la fuente
+/// principal (o la versificación del índice) y lo que hay en disco. `front/title`
+/// va siempre primero; en los proyectos de palabras (tw) solo hay el capítulo "01".
+fn card_ids(st: &AppState, project: &Project) -> Vec<(String, Vec<String>)> {
     let m = &project.manifest;
-    let mut chapters: Vec<ChapterInfo> = vec![];
-    let push = |ch: &str, chunks: Vec<String>, chapters: &mut Vec<ChapterInfo>| {
-        if let Some(existing) = chapters.iter_mut().find(|c| c.id == ch) {
+    let mut chapters: Vec<(String, Vec<String>)> = vec![];
+    let push = |ch: &str, chunks: Vec<String>, chapters: &mut Vec<(String, Vec<String>)>| {
+        if let Some((_, existing)) = chapters.iter_mut().find(|(c, _)| c == ch) {
             for c in chunks {
-                if !existing.chunks.iter().any(|x| x.id == c) {
-                    existing.chunks.push(ChunkInfo { id: c, finished: false, has_text: false, has_conflict: false });
+                if !existing.contains(&c) {
+                    existing.push(c);
                 }
             }
         } else {
-            chapters.push(ChapterInfo {
-                id: ch.to_string(),
-                title: String::new(),
-                chunks: chunks.into_iter().map(|c| ChunkInfo { id: c, finished: false, has_text: false, has_conflict: false }).collect(),
-            });
+            chapters.push((ch.to_string(), chunks));
         }
     };
-    // front/title siempre primero.
-    push("front", vec!["title".into()], &mut chapters);
     let source_rc = m
         .source_translations
         .iter()
@@ -298,7 +283,7 @@ fn chapter_structure(st: &AppState, project: &Project) -> R<Vec<ChapterInfo>> {
     if m.type_.id == "tw" {
         // Palabras: chunks = slugs del diccionario fuente + los existentes.
         let mut words: Vec<String> = source_rc.as_ref().map(|rc| rc.word_slugs()).unwrap_or_default();
-        for c in project.chunks("01").map_err(err)? {
+        for c in project.chunks("01").unwrap_or_default() {
             if !words.contains(&c) {
                 words.push(c);
             }
@@ -306,6 +291,7 @@ fn chapter_structure(st: &AppState, project: &Project) -> R<Vec<ChapterInfo>> {
         words.sort();
         push("01", words, &mut chapters);
     } else {
+        push("front", vec!["title".into()], &mut chapters);
         if let Some(rc) = &source_rc {
             for ch in rc.chapters() {
                 let mut chunks = vec!["title".to_string()];
@@ -323,15 +309,35 @@ fn chapter_structure(st: &AppState, project: &Project) -> R<Vec<ChapterInfo>> {
                 push(&ch, chunks, &mut chapters);
             }
         }
-        for ch in project.chapters().map_err(err)? {
-            let chunks = project.chunks(&ch).map_err(err)?;
+        for ch in project.chapters().unwrap_or_default() {
+            let mut chunks = vec!["title".to_string()];
+            chunks.extend(project.chunks(&ch).unwrap_or_default());
             push(&ch, chunks, &mut chapters);
         }
     }
-    // Ordenar y rellenar estado.
-    chapters.sort_by(|a, b| btt_core::project::natural_cmp(&a.id, &b.id));
+    chapters.sort_by(|a, b| btt_core::project::natural_cmp(&a.0, &b.0));
+    for (_, chunks) in &mut chapters {
+        chunks.sort_by(|a, b| btt_core::project::chunk_cmp(a, b));
+    }
+    chapters
+}
+
+/// Estructura de capítulos/chunks con su estado (texto, conflicto, terminado).
+fn chapter_structure(st: &AppState, project: &Project) -> R<Vec<ChapterInfo>> {
+    let m = &project.manifest;
+    let source_rc = m
+        .source_translations
+        .iter()
+        .find_map(|s| st.container(&s.language_id, source_project_slug(m), &s.resource_id).ok());
+    let mut chapters: Vec<ChapterInfo> = card_ids(st, project)
+        .into_iter()
+        .map(|(id, chunks)| ChapterInfo {
+            id,
+            title: String::new(),
+            chunks: chunks.into_iter().map(|c| ChunkInfo { id: c, finished: false, has_text: false, has_conflict: false }).collect(),
+        })
+        .collect();
     for ch in &mut chapters {
-        ch.chunks.sort_by(|a, b| btt_core::project::chunk_cmp(&a.id, &b.id));
         if ch.id != "front" {
             ch.title = project.read_chapter_title(&ch.id).unwrap_or_default();
             if ch.title.is_empty() {

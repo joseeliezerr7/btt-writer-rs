@@ -387,6 +387,8 @@ export interface WordIndexEntry {
 
 /** Dentro de Tauri usa IPC; en un navegador normal usa el backend simulado (solo para probar la interfaz). */
 export const isTauri = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+/** Android o iOS: sin diálogo nativo de "guardar como" ni actualizador. */
+export const isMobile = typeof navigator !== "undefined" && /Android|iPhone|iPad/i.test(navigator.userAgent);
 
 const call = async <T,>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
   if (isTauri) return invoke<T>(cmd, args);

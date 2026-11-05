@@ -69,7 +69,13 @@ export default function PublishScreen({ id }: { id: string }) {
                     <div key={`${v.chapter}-${v.chunk}`} className="list-item" onClick={() => navigate({ name: "translate", id, chapter: v.chapter, chunk: v.chunk, mode: "review" })}>
                       <IconBadge tone="warning"><AlertTriangle size={16} /></IconBadge>
                       <div className="grow">
-                        <strong>{t("translate.chapter")} {v.chapter.replace(/^0+/, "")}:{v.chunk.replace(/^0+/, "")}</strong>
+                        <strong>
+                          {v.chapter === "front"
+                            ? t("translate.book_title")
+                            : v.chunk === "title" || v.chunk === "reference"
+                              ? `${t("translate.chapter")} ${v.chapter.replace(/^0+/, "")} · ${t(v.chunk === "title" ? "translate.chapter_title" : "translate.chapter_reference")}`
+                              : `${t("translate.chapter")} ${v.chapter.replace(/^0+/, "")}:${v.chunk.replace(/^0+/, "")}`}
+                        </strong>
                         <div className="small muted">{v.issues.map((i) => issueText(t, i)).join(" ")}</div>
                       </div>
                       <Button size="sm">{t("publish.review")}</Button>
