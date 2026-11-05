@@ -464,11 +464,15 @@ function ChunkCard(props: {
     if (isTw && source?.downloaded) api.getWord(source.language_slug, chunk.id).then(setSourceWord).catch(() => {});
   }, [props.review, source?.language_slug, source?.slug, chapter, chunk.id]);
 
+  // Texto escrito que todavía no se ha enviado al disco (el guardado espera 500 ms tras la última tecla).
+  const pending = useRef<string | null>(null);
   const save = (value: string) => {
     setText(value);
     setSaved(false);
+    pending.current = value;
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
+      pending.current = null;
       try {
         await api.writeChunk(id, chapter, chunk.id, value);
         setSaved(true);
@@ -477,11 +481,20 @@ function ChunkCard(props: {
       }
     }, 500);
   };
-  useEffect(() => () => { if (timer.current) clearTimeout(timer.current); }, []);
+  // Al desmontar la tarjeta (cambio de capítulo, de modo o de proyecto) se guarda lo pendiente en vez de perderlo.
+  // El id, capítulo y chunk van fijados en la llamada: nunca puede escribirse sobre otro proyecto.
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+    const value = pending.current;
+    if (value !== null) {
+      pending.current = null;
+      api.writeChunk(id, chapter, chunk.id, value).catch((e) => console.warn("guardado al salir:", e));
+    }
+  }, []);
 
   const toggleDone = async (finished: boolean) => {
     if (finished) {
-      if (timer.current) { clearTimeout(timer.current); await api.writeChunk(id, chapter, chunk.id, text).catch(fb.error); }
+      if (timer.current) { clearTimeout(timer.current); pending.current = null; await api.writeChunk(id, chapter, chunk.id, text).catch(fb.error); }
       const ok = await fb.confirm(t("translate.checklist_title"), t("translate.checklist_body"), { okLabel: t("common.confirm") });
       if (!ok) return;
     }
@@ -811,11 +824,21 @@ function HelpsEditor({ items, type, readOnly, onChange }: { items: HelpItem[]; t
   const { t } = useT();
   const [list, setList] = useState<HelpItem[]>(items.length ? items : type === "tw" ? [{ title: "", body: "" }] : []);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pending = useRef<HelpItem[] | null>(null);
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
   const update = (next: HelpItem[]) => {
     setList(next);
+    pending.current = next;
     if (timer.current) clearTimeout(timer.current);
-    timer.current = setTimeout(() => onChange(next), 500);
+    timer.current = setTimeout(() => { pending.current = null; onChange(next); }, 500);
   };
+  // Lo pendiente se entrega al desmontar en vez de perderse.
+  useEffect(() => () => {
+    if (timer.current) clearTimeout(timer.current);
+    const next = pending.current;
+    if (next !== null) { pending.current = null; onChangeRef.current(next); }
+  }, []);
   const [titleLabel, bodyLabel] = type === "tq" ? [t("translate.question"), t("translate.answer")] : type === "tw" ? [t("translate.word_title"), t("translate.word_body")] : [t("translate.help_title"), t("translate.help_body")];
   return (
     <div className="col">
