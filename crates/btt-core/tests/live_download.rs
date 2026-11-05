@@ -21,10 +21,11 @@ fn descarga_fuente_real_desde_cdn() {
     assert!(!row.downloaded);
 
     let client = http_client().unwrap();
+    let lib = std::sync::Mutex::new(lib);
     let slugs = download_resource(&lib, &row, &client, false).expect("descarga desde el CDN");
     assert!(slugs.iter().any(|s| s == "es-419_jon_ulb"), "slugs: {slugs:?}");
 
-    let rc = lib.open_container("es-419", "jon", "ulb").unwrap();
+    let rc = lib.lock().unwrap().open_container("es-419", "jon", "ulb").unwrap();
     let chapters = rc.chapters();
     assert!(chapters.iter().any(|c| c == "01"), "capítulos: {chapters:?}");
     let chunk = rc.read_chunk("01", "01").expect("chunk 01/01");

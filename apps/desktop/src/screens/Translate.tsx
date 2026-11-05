@@ -38,6 +38,7 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
   const [focus, setFocus] = useState<string | null>(initialChunk ?? null);
   const [refresh, setRefresh] = useState(0);
   const [bookTitleLabel, setBookTitleLabel] = useState("");
+  const loadedOnce = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -48,8 +49,11 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
       setChapter((c) => c || (initialChapter ?? (d.chapters.find((x) => x.id !== "front")?.id ?? "front")));
     } catch (e) {
       fb.error(e);
-      navigate({ name: "home" });
+      // Solo la primera carga devuelve a Inicio; un fallo pasajero al recargar
+      // (archivo bloqueado un instante) no debe sacar al usuario del proyecto.
+      if (!loadedOnce.current) navigate({ name: "home" });
     }
+    loadedOnce.current = true;
   }, [id]);
   useEffect(() => {
     load();
@@ -466,35 +470,44 @@ function ChunkCard(props: {
 
   // Texto escrito que todavía no se ha enviado al disco (el guardado espera 500 ms tras la última tecla).
   const pending = useRef<string | null>(null);
+  // Las escrituras de esta tarjeta van en serie: una lenta nunca puede aterrizar
+  // después de otra más nueva y dejar en disco un texto viejo.
+  const queue = useRef<Promise<unknown>>(Promise.resolve());
+  const writeNow = (value: string) => {
+    const p = queue.current.then(() => api.writeChunk(id, chapter, chunk.id, value));
+    queue.current = p.catch(() => {});
+    return p;
+  };
   const save = (value: string) => {
     setText(value);
     setSaved(false);
     pending.current = value;
     if (timer.current) clearTimeout(timer.current);
     timer.current = setTimeout(async () => {
-      pending.current = null;
       try {
-        await api.writeChunk(id, chapter, chunk.id, value);
+        await writeNow(value);
+        // Si no se escribió nada más mientras tanto, ya no hay texto pendiente.
+        if (pending.current === value) pending.current = null;
         setSaved(true);
       } catch (e) {
-        fb.error(e);
+        fb.error(e); // lo pendiente se conserva para reintentar al salir
       }
     }, 500);
   };
-  // Al desmontar la tarjeta (cambio de capítulo, de modo o de proyecto) se guarda lo pendiente en vez de perderlo.
-  // El id, capítulo y chunk van fijados en la llamada: nunca puede escribirse sobre otro proyecto.
+  // Al desmontar la tarjeta (cambio de capítulo, de modo o de proyecto) se guarda lo pendiente en vez de perderlo,
+  // y se deja en el historial. El id, capítulo y chunk van fijados en la llamada: nunca se escribe sobre otro proyecto.
   useEffect(() => () => {
     if (timer.current) clearTimeout(timer.current);
     const value = pending.current;
     if (value !== null) {
       pending.current = null;
-      api.writeChunk(id, chapter, chunk.id, value).catch((e) => console.warn("guardado al salir:", e));
+      writeNow(value).then(() => api.commitProject(id)).catch((e) => console.warn("guardado al salir:", e));
     }
   }, []);
 
   const toggleDone = async (finished: boolean) => {
     if (finished) {
-      if (timer.current) { clearTimeout(timer.current); pending.current = null; await api.writeChunk(id, chapter, chunk.id, text).catch(fb.error); }
+      if (timer.current) { clearTimeout(timer.current); pending.current = null; await writeNow(text).catch(fb.error); }
       const ok = await fb.confirm(t("translate.checklist_title"), t("translate.checklist_body"), { okLabel: t("common.confirm") });
       if (!ok) return;
     }
@@ -516,7 +529,12 @@ function ChunkCard(props: {
     if (data?.finished) {
       const ok = await fb.confirm(t("translate.done"), t("translate.reopen"));
       if (!ok) return;
-      await api.setChunkFinished(id, chapter, chunk.id, false).catch(fb.error);
+      try {
+        await api.setChunkFinished(id, chapter, chunk.id, false);
+      } catch (e) {
+        fb.error(e);
+        return;
+      }
       await reload();
       props.onChanged();
     }
@@ -575,6 +593,7 @@ function ChunkCard(props: {
       return;
     }
     if (timer.current) clearTimeout(timer.current);
+    pending.current = null;
     try {
       const restored = await api.restoreChunk(id, entry.id, chapter, chunk.id);
       setText(restored);
@@ -676,7 +695,7 @@ function ChunkCard(props: {
             })}
           </div>
         ) : isHelps && !isTitle ? (
-          <HelpsEditor items={data.helps} type={type} readOnly={!canEdit} onChange={async (items) => { const txt = await api.writeHelps(id, chapter, chunk.id, items).catch((e) => { fb.error(e); return null; }); if (txt !== null) setText(txt); }} />
+          <HelpsEditor key={data.text} items={data.helps} type={type} readOnly={!canEdit} onChange={async (items) => { const txt = await api.writeHelps(id, chapter, chunk.id, items).catch((e) => { fb.error(e); return null; }); if (txt !== null) setText(txt); }} />
         ) : canEdit ? (
           <>
             {!isTitle && !isHelps && expected.length > 0 && (
@@ -791,7 +810,10 @@ function WordIndexButton({ language, onPick }: { language: string; onPick: (w: W
   const [q, setQ] = useState("");
   const [list, setList] = useState<{ slug: string; title: string }[]>([]);
   useEffect(() => {
-    if (open) api.wordIndex(language, q).then(setList).catch(() => setList([]));
+    if (!open) return;
+    let alive = true;
+    const t = setTimeout(() => api.wordIndex(language, q).then((l) => alive && setList(l)).catch(() => alive && setList([])), 150);
+    return () => { alive = false; clearTimeout(t); };
   }, [open, q, language]);
   return (
     <>

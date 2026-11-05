@@ -18,9 +18,48 @@
 use crate::manifest::Manifest;
 use crate::{Error, Result};
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::SystemTime;
+
+/// Candado por proyecto (clave: carpeta raíz). Serializa escrituras de chunks,
+/// manifest, commits, pull/merge, exportación y borrado del mismo proyecto
+/// entre el hilo de la interfaz, el pool de tareas y el hilo de respaldos.
+/// No es reentrante: quien ya lo tiene debe usar las variantes `_unlocked`.
+static PROJECT_LOCKS: OnceLock<(Mutex<HashSet<PathBuf>>, Condvar)> = OnceLock::new();
+
+pub struct ProjectGuard(PathBuf);
+
+fn lock_key(root: &Path) -> PathBuf {
+    let p = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+    if cfg!(windows) {
+        PathBuf::from(p.to_string_lossy().to_lowercase())
+    } else {
+        p
+    }
+}
+
+pub fn lock_project(root: &Path) -> ProjectGuard {
+    let (m, cv) = PROJECT_LOCKS.get_or_init(|| (Mutex::new(HashSet::new()), Condvar::new()));
+    let key = lock_key(root);
+    let mut held = m.lock().unwrap_or_else(|e| e.into_inner());
+    while held.contains(&key) {
+        held = cv.wait(held).unwrap_or_else(|e| e.into_inner());
+    }
+    held.insert(key.clone());
+    ProjectGuard(key)
+}
+
+impl Drop for ProjectGuard {
+    fn drop(&mut self) {
+        if let Some((m, cv)) = PROJECT_LOCKS.get() {
+            m.lock().unwrap_or_else(|e| e.into_inner()).remove(&self.0);
+            cv.notify_all();
+        }
+    }
+}
 
 pub const MANIFEST_FILE: &str = "manifest.json";
 pub const FRONT_DIR: &str = "front";
@@ -102,6 +141,8 @@ impl Project {
     }
 
     pub fn open_by_id(translations_dir: &Path, id: &str) -> Result<Project> {
+        // El id viene de la interfaz: nunca debe poder apuntar fuera de `translations/`.
+        validate_segment(id)?;
         Project::open(&translations_dir.join(id))
     }
 
@@ -116,8 +157,17 @@ impl Project {
             if !entry.file_type()?.is_dir() {
                 continue;
             }
-            if let Ok(p) = Project::open(&entry.path()) {
-                out.push(p);
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') {
+                continue; // `.import-*`, `.trash-*`
+            }
+            match Project::open(&entry.path()) {
+                Ok(p) => out.push(p),
+                Err(e) if entry.path().join(MANIFEST_FILE).exists() => {
+                    // Que no desaparezca en silencio: queda rastro en el registro.
+                    log::warn!("proyecto ilegible en {}: {e}", entry.path().display());
+                }
+                Err(_) => {}
             }
         }
         // La clave recorre los archivos del proyecto: calcularla una sola vez por proyecto.
@@ -130,6 +180,7 @@ impl Project {
     }
 
     pub fn save_manifest(&self) -> Result<()> {
+        let _guard = lock_project(&self.root);
         atomic_write(&self.root.join(MANIFEST_FILE), &self.manifest.to_json())
     }
 
@@ -139,12 +190,15 @@ impl Project {
     }
 
     /// Igual que `modified_at` pero en milisegundos (clave de caché fiable).
+    /// Incluye la fecha de las carpetas: borrar un chunk no cambia ningún archivo,
+    /// solo el directorio del capítulo.
     pub fn modified_at_ms(&self) -> u64 {
-        let mut latest = mtime_ms(&self.root.join(MANIFEST_FILE));
+        let mut latest = mtime_ms(&self.root.join(MANIFEST_FILE)).max(mtime_ms(&self.root));
         if let Ok(rd) = fs::read_dir(&self.root) {
             for e in rd.flatten() {
                 let p = e.path();
                 if p.is_dir() && p.file_name().map(|n| n != ".git").unwrap_or(false) {
+                    latest = latest.max(mtime_ms(&p));
                     if let Ok(files) = fs::read_dir(&p) {
                         for f in files.flatten() {
                             latest = latest.max(mtime_ms(&f.path()));
@@ -288,6 +342,7 @@ impl Project {
     /// mantiene el archivo (vacío) para conservar la estructura.
     pub fn write_chunk(&self, chapter: &str, chunk: &str, text: &str) -> Result<()> {
         let path = self.chunk_path(chapter, chunk)?;
+        let _guard = lock_project(&self.root);
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
@@ -296,6 +351,7 @@ impl Project {
 
     pub fn delete_chunk(&self, chapter: &str, chunk: &str) -> Result<()> {
         let path = self.chunk_path(chapter, chunk)?;
+        let _guard = lock_project(&self.root);
         if path.is_file() {
             fs::remove_file(path)?;
         }
@@ -353,9 +409,16 @@ impl Project {
         }
     }
 
-    /// Elimina el proyecto del disco por completo.
+    /// Elimina el proyecto del disco por completo. Primero se renombra (atómico) para
+    /// que un borrado a medias no deje una carpeta zombi que impida crear el proyecto.
     pub fn delete(self) -> Result<()> {
-        remove_dir_all_robust(&self.root)
+        let _guard = lock_project(&self.root);
+        let trash = self.root.with_file_name(format!(".trash-{}-{}", self.id(), std::process::id()));
+        let _ = remove_dir_all_robust(&trash);
+        match fs::rename(&self.root, &trash) {
+            Ok(()) => remove_dir_all_robust(&trash),
+            Err(_) => remove_dir_all_robust(&self.root),
+        }
     }
 
     /// Cambia el tipo de recurso (p. ej. de `reg` a `ulb`). Renombra la carpeta.
@@ -477,6 +540,44 @@ pub fn remove_dir_all_robust(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn el_candado_por_proyecto_serializa_hilos() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("p");
+        fs::create_dir_all(&root).unwrap();
+        let counter = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let max_seen = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let handles: Vec<_> = (0..8)
+            .map(|_| {
+                let (root, counter, max_seen) = (root.clone(), counter.clone(), max_seen.clone());
+                std::thread::spawn(move || {
+                    for _ in 0..20 {
+                        let _g = lock_project(&root);
+                        let inside = counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                        max_seen.fetch_max(inside, std::sync::atomic::Ordering::SeqCst);
+                        std::thread::sleep(std::time::Duration::from_micros(50));
+                        counter.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(max_seen.load(std::sync::atomic::Ordering::SeqCst), 1);
+        // Otra carpeta no espera.
+        let _a = lock_project(&root);
+        let _b = lock_project(&tmp.path().join("otro"));
+    }
+
+    #[test]
+    fn open_by_id_rechaza_rutas() {
+        let tmp = tempfile::tempdir().unwrap();
+        for bad in ["..", "../x", "a/b", "a\\b", "C:x", ".git", ""] {
+            assert!(matches!(Project::open_by_id(tmp.path(), bad), Err(Error::UnsafePath(_))), "aceptó {bad:?}");
+        }
+    }
     use crate::manifest::{IdName, TargetLanguage};
 
     fn manifest() -> Manifest {

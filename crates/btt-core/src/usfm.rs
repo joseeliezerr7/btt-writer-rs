@@ -372,6 +372,17 @@ pub fn export_book(project: &Project) -> Result<String> {
 
     let mut chapters = project.chapters()?;
     chapters.sort_by(|a, b| natural_cmp(a, b));
+    /// El primer chunk de cada capítulo suele guardarse como `\c 1 \v 1 …`; el `\c`
+    /// ya lo escribe la exportación, así que se quita para no duplicarlo.
+    fn strip_chapter_marker(text: &str) -> &str {
+        let Some(rest) = text.strip_prefix("\\c") else { return text };
+        let rest = rest.trim_start();
+        let digits = rest.trim_start_matches(|c: char| c.is_ascii_digit());
+        if digits.len() == rest.len() {
+            return text;
+        }
+        digits.trim_start()
+    }
     for ch in chapters {
         let num = ch.trim_start_matches('0');
         let num = if num.is_empty() { "0" } else { num };
@@ -386,7 +397,7 @@ pub fn export_book(project: &Project) -> Result<String> {
             }
             let text = project.read_chunk(&ch, &chunk)?;
             let text = text.replace("\r\n", "\n");
-            let text = text.trim();
+            let text = strip_chapter_marker(text.trim());
             if text.is_empty() {
                 continue;
             }
@@ -528,6 +539,14 @@ mod tests {
         let c = split_into_chunks(&book2.chapters[0], &[]);
         assert_eq!(c.len(), 2);
         assert_eq!(verse_numbers(&c[1].text), vec![5, 6, 7]);
+
+        // Los proyectos reales guardan el primer chunk como `\c 1 \v 1 …`: el
+        // marcador de capítulo no debe salir dos veces en el USFM exportado.
+        p.write_chunk("01", "01", "\\c 1 \\v 1 El anciano \\v 2 Amado").unwrap();
+        let usfm = export_book(&p).unwrap();
+        assert_eq!(usfm.matches("\\c 1").count(), 1, "{usfm}");
+        assert!(usfm.contains("\\c 1\n\\s5\n\\p\n\\v 1 El anciano"), "{usfm}");
+        assert_eq!(parse_book(&usfm).unwrap().chapters.len(), 2);
     }
 
     #[test]

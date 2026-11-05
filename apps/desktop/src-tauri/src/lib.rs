@@ -23,56 +23,58 @@ pub struct AppState {
     pub rc_cache: Mutex<HashMap<String, Arc<ResourceContainer>>>,
     /// Recorrido de chunks por proyecto (id → scan), válido mientras no cambie `modified_at_ms`.
     pub list_cache: Mutex<HashMap<String, ProjectScan>>,
+    /// Solo una pasada de respaldo a la vez (temporizador vs. "respaldar ahora").
+    pub backup_running: Mutex<()>,
     pub device_name: String,
 }
 
 impl AppState {
     pub fn container(&self, lang: &str, project: &str, resource: &str) -> btt_core::Result<Arc<ResourceContainer>> {
         let slug = btt_core::rc::container_slug(lang, project, resource);
-        if let Some(rc) = self.rc_cache.lock().unwrap().get(&slug) {
+        if let Some(rc) = self.rc_cache.lock().unwrap_or_else(|e| e.into_inner()).get(&slug) {
             return Ok(rc.clone());
         }
-        let rc = Arc::new(self.library.lock().unwrap().open_container(lang, project, resource)?);
-        self.rc_cache.lock().unwrap().insert(slug, rc.clone());
+        let rc = Arc::new(self.library.lock().unwrap_or_else(|e| e.into_inner()).open_container(lang, project, resource)?);
+        self.rc_cache.lock().unwrap_or_else(|e| e.into_inner()).insert(slug, rc.clone());
         Ok(rc)
     }
 
     pub fn clear_rc_cache(&self) {
-        self.rc_cache.lock().unwrap().clear();
+        self.rc_cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
 
     pub fn author(&self) -> btt_core::gitrepo::Author {
-        self.profile.lock().unwrap().author()
+        self.profile.lock().unwrap_or_else(|e| e.into_inner()).author()
     }
 
     pub fn save_settings(&self) -> btt_core::Result<()> {
-        self.settings.lock().unwrap().save(&self.paths.settings_file())
+        self.settings.lock().unwrap_or_else(|e| e.into_inner()).save(&self.paths.settings_file())
     }
 
     pub fn save_profile(&self) -> btt_core::Result<()> {
-        self.profile.lock().unwrap().save(&self.paths.profile_file())
+        self.profile.lock().unwrap_or_else(|e| e.into_inner()).save(&self.paths.profile_file())
     }
 
     pub fn save_backup_state(&self) -> btt_core::Result<()> {
-        self.backup_state.lock().unwrap().save(&self.paths.backup_state_file())
+        self.backup_state.lock().unwrap_or_else(|e| e.into_inner()).save(&self.paths.backup_state_file())
     }
 
     /// Scan de un proyecto, reutilizando la caché si los archivos no cambiaron.
     pub fn project_scan(&self, project: &btt_core::project::Project) -> ProjectScan {
         let id = project.id();
         let mtime = project.modified_at_ms();
-        if let Some(c) = self.list_cache.lock().unwrap().get(&id) {
+        if let Some(c) = self.list_cache.lock().unwrap_or_else(|e| e.into_inner()).get(&id) {
             if c.modified_at_ms == mtime {
                 return c.clone();
             }
         }
         let scan = project.scan();
-        self.list_cache.lock().unwrap().insert(id, scan.clone());
+        self.list_cache.lock().unwrap_or_else(|e| e.into_inner()).insert(id, scan.clone());
         scan
     }
 
     pub fn save_list_cache(&self) {
-        let cache = self.list_cache.lock().unwrap();
+        let cache = self.list_cache.lock().unwrap_or_else(|e| e.into_inner());
         if let Ok(json) = serde_json::to_string(&*cache) {
             let _ = btt_core::project::atomic_write(&self.paths.list_cache_file(), &json);
         }
@@ -150,6 +152,7 @@ pub fn run() {
                 backup_state: Mutex::new(backup_state),
                 rc_cache: Mutex::new(HashMap::new()),
                 list_cache: Mutex::new(list_cache),
+                backup_running: Mutex::new(()),
                 device_name: device_name(),
             };
             app.manage(state);
@@ -166,7 +169,7 @@ fn start_backup_timer(app: tauri::AppHandle) {
     std::thread::spawn(move || loop {
         let minutes: i32 = {
             let st = app.state::<AppState>();
-            let m = st.settings.lock().unwrap().backup_interval_minutes;
+            let m = st.settings.lock().unwrap_or_else(|e| e.into_inner()).backup_interval_minutes;
             m
         };
         let wait = if minutes <= 0 { 60 } else { (minutes as u64) * 60 };
@@ -175,14 +178,17 @@ fn start_backup_timer(app: tauri::AppHandle) {
             continue;
         }
         let st = app.state::<AppState>();
+        let Ok(_running) = st.backup_running.try_lock() else {
+            continue; // ya hay un respaldo manual en curso
+        };
         let author = st.author();
         // Trabajar sobre una copia: el candado no se retiene durante el recorrido
         // de todos los proyectos (el listado también lo necesita).
-        let mut bs = st.backup_state.lock().unwrap().clone();
+        let mut bs = st.backup_state.lock().unwrap_or_else(|e| e.into_inner()).clone();
         match btt_core::backup::run(&st.paths.translations(), &st.paths.backups(), &mut bs, &author, btt_core::VERSION) {
             Ok(report) => {
                 {
-                    let mut cur = st.backup_state.lock().unwrap();
+                    let mut cur = st.backup_state.lock().unwrap_or_else(|e| e.into_inner());
                     cur.last_hash.extend(bs.last_hash);
                     cur.last_time.extend(bs.last_time);
                 }
@@ -190,8 +196,16 @@ fn start_backup_timer(app: tauri::AppHandle) {
                 if !report.backed_up.is_empty() {
                     let _ = app.emit("backup-done", &report.backed_up);
                 }
+                // Un respaldo que falla no puede quedarse en el registro: el usuario debe verlo.
+                if !report.failed.is_empty() {
+                    log::warn!("respaldos fallidos: {:?}", report.failed);
+                    let _ = app.emit("backup-failed", &report.failed);
+                }
             }
-            Err(e) => log::warn!("respaldo automático: {e}"),
+            Err(e) => {
+                log::warn!("respaldo automático: {e}");
+                let _ = app.emit("backup-failed", &vec![("*".to_string(), e.to_string())]);
+            }
         }
     });
 }

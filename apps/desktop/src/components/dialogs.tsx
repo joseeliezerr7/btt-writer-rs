@@ -175,7 +175,7 @@ export function ProjectDetailsDialog({ item, onClose, onChanged, onDeleted }: { 
             {p.type_id === "text" && p.resource_id !== "obs" && (
               <select className="select" style={{ width: "auto" }} value={p.resource_id} onChange={(e) => changeResource(e.target.value)}>
                 {(settings.gateway_language_mode ? ["reg", "ulb", "udb"] : ["reg"]).concat(["reg", "ulb", "udb"].includes(p.resource_id) ? [] : [p.resource_id]).filter((v, i, a) => a.indexOf(v) === i).map((r) => (
-                  <option key={r} value={r}>{t(`resource.${r}`)}</option>
+                  <option key={r} value={r}>{["reg", "ulb", "udb", "obs"].includes(r) ? t(`resource.${r}`) : r.toUpperCase()}</option>
                 ))}
               </select>
             )}
@@ -217,7 +217,9 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
   const uiLang = lang === "es" ? "es-419" : "en";
 
   useEffect(() => {
-    api.searchLanguages(dq, 80).then(setLangs).catch(fb.error);
+    let alive = true;
+    api.searchLanguages(dq, 80).then((l) => alive && setLangs(l)).catch(fb.error);
+    return () => { alive = false; };
   }, [dq]);
   useEffect(() => {
     api.listBooks(uiLang).then(setBooks).catch(fb.error);
@@ -883,7 +885,9 @@ function UsfmImport({ uiLang, onBack, onDone }: { uiLang: string; onBack: () => 
   const [busy, setBusy] = useState(false);
   const dq = useDebounced(lq, 200);
   useEffect(() => {
-    api.searchLanguages(dq, 40).then(setLangs).catch(() => {});
+    let alive = true;
+    api.searchLanguages(dq, 40).then((l) => alive && setLangs(l)).catch(() => {});
+    return () => { alive = false; };
   }, [dq]);
   useEffect(() => {
     api.listBooks(uiLang).then(setBooks).catch(() => {});

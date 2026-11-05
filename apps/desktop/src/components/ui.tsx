@@ -54,6 +54,9 @@ export function Spinner({ label }: { label?: string }) {
   );
 }
 
+/** Diálogos abiertos, del más antiguo al más reciente: Escape solo cierra el último. */
+const dialogStack: symbol[] = [];
+
 export function Dialog(props: {
   title: ReactNode;
   onClose?: () => void;
@@ -62,12 +65,19 @@ export function Dialog(props: {
   wide?: boolean;
   narrow?: boolean;
 }) {
+  const token = useRef(Symbol("dialog"));
   useEffect(() => {
+    const me = token.current;
+    dialogStack.push(me);
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") props.onClose?.();
+      if (e.key === "Escape" && dialogStack[dialogStack.length - 1] === me) props.onClose?.();
     };
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      const i = dialogStack.lastIndexOf(me);
+      if (i >= 0) dialogStack.splice(i, 1);
+    };
   }, [props.onClose]);
   return (
     <div className="overlay" onMouseDown={(e) => e.target === e.currentTarget && props.onClose?.()}>
@@ -223,7 +233,12 @@ export function FeedbackProvider({ children, labels }: { children: ReactNode; la
   const error = useCallback((e: unknown) => toast(typeof e === "string" ? e : (e as Error)?.message ?? String(e), "error"), [toast]);
   const confirm = useCallback(
     (title: string, body: ReactNode, opts?: { okLabel?: string; cancelLabel?: string; danger?: boolean }) =>
-      new Promise<boolean>((resolve) => setConfirmReq({ title, body, resolve, ...opts })),
+      new Promise<boolean>((resolve) =>
+        setConfirmReq((prev) => {
+          prev?.resolve(false); // la pregunta anterior no puede quedarse esperando para siempre
+          return { title, body, resolve, ...opts };
+        }),
+      ),
     [],
   );
   const value = useMemo(() => ({ toast, error, confirm }), [toast, error, confirm]);

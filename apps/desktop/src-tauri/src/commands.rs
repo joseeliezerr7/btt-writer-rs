@@ -35,8 +35,42 @@ fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
+/// Proyecto fuente con el que se buscan los contenedores: los diccionarios tW se
+/// publican como `{lang}_bible_tw`, no bajo el id del proyecto.
+fn source_project_slug(m: &Manifest) -> &str {
+    if m.type_.id == "tw" { "bible" } else { &m.project.id }
+}
+
 fn open_project(st: &AppState, id: &str) -> R<Project> {
     Project::open_by_id(&st.paths.translations(), id).map_err(err)
+}
+
+/// Un identificador (idioma, libro, recurso, tipo) que acaba formando nombres de
+/// carpeta o de archivo: se rechaza todo lo que no sea un único componente de ruta.
+fn check_id(what: &str, s: &str) -> R<()> {
+    if btt_core::manifest::safe_id(s) {
+        Ok(())
+    } else {
+        Err(format!("{what} no válido: {s:?}"))
+    }
+}
+
+/// Host de una URL (`https://host/...` → `host`), sin puerto ni credenciales.
+fn url_host(url: &str) -> Option<&str> {
+    let rest = url.strip_prefix("https://")?;
+    let host = rest.split(['/', '?', '#']).next()?;
+    let host = host.rsplit('@').next()?;
+    let host = host.split(':').next()?;
+    (!host.is_empty()).then_some(host)
+}
+
+/// Solo se entrega el token de sesión a repositorios HTTPS del servidor configurado.
+fn check_clone_url(st: &AppState, url: &str) -> R<()> {
+    let api = st.settings.lock().unwrap_or_else(|e| e.into_inner()).git_api_url.clone();
+    match (url_host(url), url_host(&api)) {
+        (Some(h), Some(api_host)) if h.eq_ignore_ascii_case(api_host) => Ok(()),
+        _ => Err(format!("Solo se pueden clonar repositorios HTTPS del servidor configurado ({url})")),
+    }
 }
 
 fn now() -> u64 {
@@ -67,43 +101,48 @@ fn app_info(st: State<AppState>) -> R<AppInfo> {
 
 #[tauri::command]
 fn get_settings(st: State<AppState>) -> R<Settings> {
-    Ok(st.settings.lock().unwrap().clone())
+    Ok(st.settings.lock().unwrap_or_else(|e| e.into_inner()).clone())
 }
 
 #[tauri::command]
 fn save_settings(st: State<AppState>, settings: Settings) -> R<Settings> {
     let mut s = settings;
-    let changed_server = st.settings.lock().unwrap().content_server != s.content_server;
+    let changed_server = st.settings.lock().unwrap_or_else(|e| e.into_inner()).content_server != s.content_server;
     if changed_server {
         s.apply_server_defaults();
     }
-    *st.settings.lock().unwrap() = s.clone();
+    *st.settings.lock().unwrap_or_else(|e| e.into_inner()) = s.clone();
     st.save_settings().map_err(err)?;
     Ok(s)
 }
 
 #[tauri::command]
 fn get_profile(st: State<AppState>) -> R<Profile> {
-    Ok(st.profile.lock().unwrap().clone())
+    // La interfaz solo necesita saber si hay sesión y de quién: el token se queda en Rust.
+    let mut p = st.profile.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    if let Some(s) = p.session.as_mut() {
+        s.token.sha1.clear();
+    }
+    Ok(p)
 }
 
 #[tauri::command]
 fn save_profile(st: State<AppState>, profile: Profile) -> R<Profile> {
-    *st.profile.lock().unwrap() = profile.clone();
+    *st.profile.lock().unwrap_or_else(|e| e.into_inner()) = profile.clone();
     st.save_profile().map_err(err)?;
     Ok(profile)
 }
 
 #[tauri::command]
 fn logout(st: State<AppState>) -> R<()> {
-    let session = st.profile.lock().unwrap().session.clone();
+    let session = st.profile.lock().unwrap_or_else(|e| e.into_inner()).session.clone();
     if let Some(s) = session {
-        let api = st.settings.lock().unwrap().git_api_url.clone();
+        let api = st.settings.lock().unwrap_or_else(|e| e.into_inner()).git_api_url.clone();
         if let Ok(c) = WacsClient::new(&api) {
             let _ = c.logout(&s);
         }
     }
-    *st.profile.lock().unwrap() = Profile::default();
+    *st.profile.lock().unwrap_or_else(|e| e.into_inner()) = Profile::default();
     st.save_profile().map_err(err)
 }
 
@@ -113,7 +152,7 @@ async fn wacs_login(app: tauri::AppHandle, username: String, password: String) -
 }
 
 fn wacs_login_inner(st: &AppState, username: &str, password: &str) -> R<Profile> {
-    let api = st.settings.lock().unwrap().git_api_url.clone();
+    let api = st.settings.lock().unwrap_or_else(|e| e.into_inner()).git_api_url.clone();
     let client = WacsClient::new(&api).map_err(err)?;
     let session = client
         .login(&username, &password, &btt_core::wacs::token_name(&st.device_name))
@@ -121,7 +160,7 @@ fn wacs_login_inner(st: &AppState, username: &str, password: &str) -> R<Profile>
             btt_core::Error::Unauthorized => "Usuario o contraseña incorrectos".to_string(),
             other => other.to_string(),
         })?;
-    let mut p = st.profile.lock().unwrap();
+    let mut p = st.profile.lock().unwrap_or_else(|e| e.into_inner());
     if p.full_name.is_empty() {
         p.full_name = if session.user.full_name.is_empty() { session.user.username.clone() } else { session.user.full_name.clone() };
     }
@@ -158,7 +197,7 @@ fn total_chunks(st: &AppState, project: &Project) -> usize {
     // Fuente seleccionada → chunks del contenedor; si no, versificación del índice.
     let mut expected = 0;
     for s in &m.source_translations {
-        if let Ok(rc) = st.container(&s.language_id, &m.project.id, &s.resource_id) {
+        if let Ok(rc) = st.container(&s.language_id, source_project_slug(m), &s.resource_id) {
             let n: usize = rc.chapters().iter().map(|c| rc.chunks(c).len()).sum();
             if n > 0 {
                 expected = n;
@@ -167,7 +206,7 @@ fn total_chunks(st: &AppState, project: &Project) -> usize {
         }
     }
     if expected == 0 {
-        let lib = st.library.lock().unwrap();
+        let lib = st.library.lock().unwrap_or_else(|e| e.into_inner());
         let markers = lib.chunk_markers(&m.project.id).unwrap_or_default();
         expected = markers.values().map(|v| v.len()).sum();
     }
@@ -178,13 +217,13 @@ fn list_item(st: &AppState, p: &Project) -> ProjectListItem {
     let scan = st.project_scan(p);
     let mut summary = p.summary_from_scan(&scan);
     if summary.project_name.is_empty() {
-        let ui_lang = st.settings.lock().unwrap().ui_language.clone();
+        let ui_lang = st.settings.lock().unwrap_or_else(|e| e.into_inner()).ui_language.clone();
         let lang = if ui_lang == "es" { "es-419" } else { "en" };
-        summary.project_name = st.library.lock().unwrap().project_name(&summary.project_id, lang);
+        summary.project_name = st.library.lock().unwrap_or_else(|e| e.into_inner()).project_name(&summary.project_id, lang);
     }
     let total = total_chunks(st, p);
     let progress = if total == 0 { 0.0 } else { (summary.finished_chunks as f32 / total as f32).min(1.0) };
-    let last_backup = st.backup_state.lock().unwrap().last_time.get(&summary.id).copied();
+    let last_backup = st.backup_state.lock().unwrap_or_else(|e| e.into_inner()).last_time.get(&summary.id).copied();
     ProjectListItem { summary, total_chunks: total, progress, has_conflicts: scan.has_conflicts, last_backup }
 }
 
@@ -255,7 +294,7 @@ fn chapter_structure(st: &AppState, project: &Project) -> R<Vec<ChapterInfo>> {
     let source_rc = m
         .source_translations
         .iter()
-        .find_map(|s| st.container(&s.language_id, &m.project.id, &s.resource_id).ok());
+        .find_map(|s| st.container(&s.language_id, source_project_slug(m), &s.resource_id).ok());
     if m.type_.id == "tw" {
         // Palabras: chunks = slugs del diccionario fuente + los existentes.
         let mut words: Vec<String> = source_rc.as_ref().map(|rc| rc.word_slugs()).unwrap_or_default();
@@ -277,7 +316,7 @@ fn chapter_structure(st: &AppState, project: &Project) -> R<Vec<ChapterInfo>> {
                 push(&ch, chunks, &mut chapters);
             }
         } else if m.type_.id == "text" {
-            let lib = st.library.lock().unwrap();
+            let lib = st.library.lock().unwrap_or_else(|e| e.into_inner());
             for (ch, verses) in lib.chunk_markers(&m.project.id).unwrap_or_default() {
                 let mut chunks = vec!["title".to_string()];
                 chunks.extend(verses.iter().map(|v| format!("{v:02}")));
@@ -316,7 +355,7 @@ async fn get_project(app: tauri::AppHandle, id: String) -> R<ProjectDetail> {
     blocking(app, move |st| {
     let p = open_project(st, &id)?;
     let chapters = chapter_structure(st, &p)?;
-    let lib = st.library.lock().unwrap();
+    let lib = st.library.lock().unwrap_or_else(|e| e.into_inner());
     let mut sources = vec![];
     for s in &p.manifest.source_translations {
         let project_slug = if p.manifest.type_.id == "tw" { "bible" } else { &p.manifest.project.id };
@@ -366,7 +405,11 @@ pub struct NewProject {
 #[tauri::command]
 async fn create_project(app: tauri::AppHandle, spec: NewProject) -> R<String> {
     blocking(app, move |st| {
-    let lib = st.library.lock().unwrap();
+    check_id("idioma", &spec.language)?;
+    check_id("libro", &spec.project)?;
+    if !spec.type_id.is_empty() { check_id("tipo", &spec.type_id)?; }
+    if !spec.resource.is_empty() { check_id("recurso", &spec.resource)?; }
+    let lib = st.library.lock().unwrap_or_else(|e| e.into_inner());
     let lang = lib
         .target_language(&spec.language)
         .map_err(err)?
@@ -388,11 +431,11 @@ async fn create_project(app: tauri::AppHandle, spec: NewProject) -> R<String> {
     );
     // Nombre del proyecto se guarda vacío como hace la app original (se calcula al mostrar).
     manifest.project.name = String::new();
-    let translator = st.profile.lock().unwrap().display_name();
+    let translator = st.profile.lock().unwrap_or_else(|e| e.into_inner()).display_name();
     manifest.add_translator(&translator);
     // Fuente por defecto: la primera descargada para este libro (en/ulb preferida).
     {
-        let lib = st.library.lock().unwrap();
+        let lib = st.library.lock().unwrap_or_else(|e| e.into_inner());
         let project_slug = if type_id == "tw" { "bible" } else { spec.project.as_str() };
         let mut sources = lib.resources(project_slug).unwrap_or_default();
         sources.retain(|r| r.downloaded && (if type_id == "tw" { r.r#type == "dict" } else { r.r#type == "book" }));
@@ -413,7 +456,7 @@ async fn create_project(app: tauri::AppHandle, spec: NewProject) -> R<String> {
     })?;
     gitrepo::commit_all(&p.root, &st.author(), "create project").map_err(err)?;
     let id = p.id();
-    st.settings.lock().unwrap().last_project = id.clone();
+    st.settings.lock().unwrap_or_else(|e| e.into_inner()).last_project = id.clone();
     let _ = st.save_settings();
     Ok(id)
 }).await
@@ -428,7 +471,7 @@ async fn delete_project(app: tauri::AppHandle, id: String) -> R<String> {
     let dest = st.paths.backups().join(format!("{id}.{stamp}.tstudio"));
     let backup = btt_core::tstudio::export(&[&p], &dest, &st.author(), btt_core::VERSION).map_err(err)?;
     p.delete().map_err(err)?;
-    let mut s = st.settings.lock().unwrap();
+    let mut s = st.settings.lock().unwrap_or_else(|e| e.into_inner());
     if s.last_project == id {
         s.last_project.clear();
     }
@@ -463,6 +506,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 #[tauri::command]
 async fn change_resource(app: tauri::AppHandle, id: String, resource: String) -> R<String> {
     blocking(app, move |st| {
+    check_id("recurso", &resource)?;
     let p = open_project(st, &id)?;
     let p = p.change_resource(IdName::new(&resource, resource_name(&resource))).map_err(err)?;
     gitrepo::commit_all(&p.root, &st.author(), "change resource").map_err(err)?;
@@ -471,14 +515,16 @@ async fn change_resource(app: tauri::AppHandle, id: String, resource: String) ->
 }
 
 #[tauri::command]
-fn set_translators(st: State<AppState>, id: String, translators: Vec<String>) -> R<Vec<String>> {
-    let mut p = open_project(&st, &id)?;
+async fn set_translators(app: tauri::AppHandle, id: String, translators: Vec<String>) -> R<Vec<String>> {
+    blocking(app, move |st| {
+    let mut p = open_project(st, &id)?;
     p.manifest.translators.clear();
     for t in translators {
         p.manifest.add_translator(&t);
     }
     p.save_manifest().map_err(err)?;
     Ok(p.manifest.translators)
+}).await
 }
 
 #[tauri::command]
@@ -494,9 +540,10 @@ pub struct SourceRef {
 }
 
 #[tauri::command]
-fn set_project_sources(st: State<AppState>, id: String, sources: Vec<SourceRef>) -> R<Manifest> {
-    let mut p = open_project(&st, &id)?;
-    let lib = st.library.lock().unwrap();
+async fn set_project_sources(app: tauri::AppHandle, id: String, sources: Vec<SourceRef>) -> R<Manifest> {
+    blocking(app, move |st| {
+    let mut p = open_project(st, &id)?;
+    let lib = st.library.lock().unwrap_or_else(|e| e.into_inner());
     let project_slug = if p.manifest.type_.id == "tw" { "bible".to_string() } else { p.manifest.project.id.clone() };
     p.manifest.source_translations.clear();
     for s in sources.into_iter().take(3) {
@@ -512,6 +559,7 @@ fn set_project_sources(st: State<AppState>, id: String, sources: Vec<SourceRef>)
     drop(lib);
     p.save_manifest().map_err(err)?;
     Ok(p.manifest)
+}).await
 }
 
 // ------------------------------------------------------------------ chunks
@@ -535,7 +583,7 @@ fn expected_verses(st: &AppState, p: &Project, chapter: &str, chunk: &str) -> Ve
         return vec![];
     }
     for s in &p.manifest.source_translations {
-        if let Ok(rc) = st.container(&s.language_id, &p.manifest.project.id, &s.resource_id) {
+        if let Ok(rc) = st.container(&s.language_id, source_project_slug(&p.manifest), &s.resource_id) {
             if let Some(sc) = rc.source_chunk(chapter, chunk) {
                 let mut v: Vec<u32> = sc
                     .verses
@@ -556,10 +604,11 @@ fn expected_verses(st: &AppState, p: &Project, chapter: &str, chunk: &str) -> Ve
 }
 
 #[tauri::command]
-fn read_chunk(st: State<AppState>, id: String, chapter: String, chunk: String) -> R<ChunkData> {
-    let p = open_project(&st, &id)?;
+async fn read_chunk(app: tauri::AppHandle, id: String, chapter: String, chunk: String) -> R<ChunkData> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
     let mut text = p.read_chunk(&chapter, &chunk).map_err(err)?;
-    let expected = expected_verses(&st, &p, &chapter, &chunk);
+    let expected = expected_verses(st, &p, &chapter, &chunk);
     // Como la app original: añadir marcadores de versos faltantes al abrir.
     if !expected.is_empty() && !text.trim().is_empty() {
         let fixed = validation::add_missing_verses(&text, &expected);
@@ -587,22 +636,26 @@ fn read_chunk(st: State<AppState>, id: String, chapter: String, chunk: String) -
         has_conflict,
         text,
     })
+}).await
 }
 
 #[tauri::command]
-fn write_chunk(st: State<AppState>, id: String, chapter: String, chunk: String, text: String) -> R<()> {
-    let p = open_project(&st, &id)?;
+async fn write_chunk(app: tauri::AppHandle, id: String, chapter: String, chunk: String, text: String) -> R<()> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
     if text.trim().is_empty() && chunk != "title" && chunk != "reference" {
         // Igual que la app original: texto vacío borra el archivo.
         p.delete_chunk(&chapter, &chunk).map_err(err)
     } else {
         p.write_chunk(&chapter, &chunk, &text).map_err(err)
     }
+}).await
 }
 
 #[tauri::command]
-fn write_helps(st: State<AppState>, id: String, chapter: String, chunk: String, items: Vec<HelpItem>) -> R<String> {
-    let p = open_project(&st, &id)?;
+async fn write_helps(app: tauri::AppHandle, id: String, chapter: String, chunk: String, items: Vec<HelpItem>) -> R<String> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
     let text = validation::serialize_helps(&items);
     if text.is_empty() {
         p.delete_chunk(&chapter, &chunk).map_err(err)?;
@@ -610,15 +663,17 @@ fn write_helps(st: State<AppState>, id: String, chapter: String, chunk: String, 
         p.write_chunk(&chapter, &chunk, &text).map_err(err)?;
     }
     Ok(text)
+}).await
 }
 
 #[tauri::command]
-fn set_chunk_finished(st: State<AppState>, id: String, chapter: String, chunk: String, finished: bool) -> R<Vec<Issue>> {
-    let mut p = open_project(&st, &id)?;
+async fn set_chunk_finished(app: tauri::AppHandle, id: String, chapter: String, chunk: String, finished: bool) -> R<Vec<Issue>> {
+    blocking(app, move |st| {
+    let mut p = open_project(st, &id)?;
     if finished {
         let text = p.read_chunk(&chapter, &chunk).map_err(err)?;
         let issues = if p.manifest.type_.id == "text" {
-            let expected = expected_verses(&st, &p, &chapter, &chunk);
+            let expected = expected_verses(st, &p, &chapter, &chunk);
             validation::validate_chunk(&text, &expected)
         } else if validation::helps_complete(&validation::parse_helps(&text)) {
             vec![]
@@ -632,6 +687,7 @@ fn set_chunk_finished(st: State<AppState>, id: String, chapter: String, chunk: S
     p.set_chunk_finished(&chapter, &chunk, finished).map_err(err)?;
     gitrepo::commit_all(&p.root, &st.author(), gitrepo::AUTOSAVE_MESSAGE).map_err(err)?;
     Ok(vec![])
+}).await
 }
 
 #[derive(Serialize)]
@@ -646,7 +702,7 @@ async fn mark_all_chunks(app: tauri::AppHandle, id: String) -> R<MarkAllResult> 
     blocking(app, move |st| {
     let mut p = open_project(st, &id)?;
     let m = p.manifest.clone();
-    let rc = m.source_translations.iter().find_map(|s| st.container(&s.language_id, &m.project.id, &s.resource_id).ok());
+    let rc = m.source_translations.iter().find_map(|s| st.container(&s.language_id, source_project_slug(&m), &s.resource_id).ok());
     let results = validation::validate_project(&p, rc.as_deref()).map_err(err)?;
     let mut marked = 0;
     let mut invalid = vec![];
@@ -669,7 +725,7 @@ async fn validate_project(app: tauri::AppHandle, id: String) -> R<Vec<ChunkValid
     blocking(app, move |st| {
     let p = open_project(st, &id)?;
     let m = &p.manifest;
-    let rc = m.source_translations.iter().find_map(|s| st.container(&s.language_id, &m.project.id, &s.resource_id).ok());
+    let rc = m.source_translations.iter().find_map(|s| st.container(&s.language_id, source_project_slug(m), &s.resource_id).ok());
     validation::validate_project(&p, rc.as_deref()).map_err(err)
 }).await
 }
@@ -696,10 +752,12 @@ pub struct HistoryEntry {
 
 /// Versiones guardadas de un chunk (la más reciente primero). Guarda antes los cambios pendientes.
 #[tauri::command]
-fn chunk_history(st: State<AppState>, id: String, chapter: String, chunk: String) -> R<Vec<HistoryEntry>> {
-    let p = open_project(&st, &id)?;
+async fn chunk_history(app: tauri::AppHandle, id: String, chapter: String, chunk: String) -> R<Vec<HistoryEntry>> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
     gitrepo::commit_all(&p.root, &st.author(), gitrepo::AUTOSAVE_MESSAGE).map_err(err)?;
     history_entries(&p, &chapter, &chunk)
+}).await
 }
 
 /// Versiones distintas de un chunk, la más reciente primero (ver `chunk_history`).
@@ -739,8 +797,9 @@ fn history_entries(p: &Project, chapter: &str, chunk: &str) -> R<Vec<HistoryEntr
 /// "restore <commit>" (la versión que había se conserva y se puede recuperar).
 /// Si el texto ya era el mismo, no crea ninguna entrada.
 #[tauri::command]
-fn restore_chunk(st: State<AppState>, id: String, commit: String, chapter: String, chunk: String) -> R<String> {
-    let p = open_project(&st, &id)?;
+async fn restore_chunk(app: tauri::AppHandle, id: String, commit: String, chapter: String, chunk: String) -> R<String> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
     let file = format!("{chapter}/{chunk}.txt");
     let text = gitrepo::file_at(&p.root, &commit, &file).map_err(err)?;
     let norm = |s: &str| s.replace("\r\n", "\n").trim().to_string();
@@ -755,6 +814,7 @@ fn restore_chunk(st: State<AppState>, id: String, commit: String, chapter: Strin
     let short: String = commit.chars().take(7).collect();
     gitrepo::commit_all(&p.root, &st.author(), &format!("restore {short}")).map_err(err)?;
     Ok(text)
+}).await
 }
 
 #[tauri::command]
@@ -781,7 +841,7 @@ async fn search_project(app: tauri::AppHandle, id: String, query: String, in_sou
     let mut hits = vec![];
     if in_source {
         let m = &p.manifest;
-        if let Some(rc) = m.source_translations.iter().find_map(|s| st.container(&s.language_id, &m.project.id, &s.resource_id).ok()) {
+        if let Some(rc) = m.source_translations.iter().find_map(|s| st.container(&s.language_id, source_project_slug(m), &s.resource_id).ok()) {
             for ch in rc.chapters() {
                 for c in rc.chunks(&ch) {
                     let text = rc.source_chunk(&ch, &c).map(|s| s.plain_text()).unwrap_or_default();
@@ -806,10 +866,17 @@ async fn search_project(app: tauri::AppHandle, id: String, query: String, in_sou
 }
 
 fn snippet_for(text: &str, q: &str) -> Option<String> {
-    let lower = text.to_lowercase();
-    let i = lower.find(q)?;
-    let start = lower[..i].char_indices().rev().nth(40).map(|(j, _)| j).unwrap_or(0);
-    let end = lower[i..].char_indices().nth(q.chars().count() + 60).map(|(j, _)| i + j).unwrap_or(text.len());
+    // `to_lowercase` puede cambiar la longitud en bytes (İ, K de Kelvin…): se busca
+    // carácter a carácter y se corta por límites de carácter del texto original.
+    let q: Vec<char> = q.to_lowercase().chars().collect();
+    if q.is_empty() {
+        return None;
+    }
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let lower: Vec<char> = chars.iter().map(|(_, c)| c.to_lowercase().next().unwrap_or(*c)).collect();
+    let hit = (0..lower.len()).find(|&i| lower[i..].starts_with(&q))?;
+    let start = chars[hit.saturating_sub(40)].0;
+    let end = chars.get(hit + q.len() + 60).map(|(j, _)| *j).unwrap_or(text.len());
     Some(text[start..end].replace('\n', " "))
 }
 
@@ -883,7 +950,7 @@ pub struct Helps {
 #[tauri::command]
 fn get_helps(st: State<AppState>, language: String, project: String, resource: String, chapter: String, chunk: String) -> R<Helps> {
     let (has_notes, has_questions, has_words) = {
-        let lib = st.library.lock().unwrap();
+        let lib = st.library.lock().unwrap_or_else(|e| e.into_inner());
         (lib.has_container(&language, &project, "tn"), lib.has_container(&language, &project, "tq"), lib.has_container(&language, "bible", "tw"))
     };
     let notes = if has_notes { st.container(&language, &project, "tn").map(|rc| rc.help_entries(&chapter, &chunk)).unwrap_or_default() } else { vec![] };
@@ -930,12 +997,12 @@ fn word_index(st: State<AppState>, language: String, query: String) -> R<Vec<Wor
 
 #[tauri::command]
 fn search_languages(st: State<AppState>, query: String, limit: usize) -> R<Vec<TargetLanguageRow>> {
-    st.library.lock().unwrap().target_languages(&query, limit).map_err(err)
+    st.library.lock().unwrap_or_else(|e| e.into_inner()).target_languages(&query, limit).map_err(err)
 }
 
 #[tauri::command]
 fn list_books(st: State<AppState>, language: String) -> R<Vec<ProjectRow>> {
-    let lib = st.library.lock().unwrap();
+    let lib = st.library.lock().unwrap_or_else(|e| e.into_inner());
     let mut rows = lib.projects(&language).map_err(err)?;
     rows.sort_by_key(|p| (btt_core::bible_sort_index(&p.slug), p.sort));
     Ok(rows)
@@ -943,12 +1010,12 @@ fn list_books(st: State<AppState>, language: String) -> R<Vec<ProjectRow>> {
 
 #[tauri::command]
 fn list_categories(st: State<AppState>, language: String) -> R<Vec<CategoryRow>> {
-    st.library.lock().unwrap().categories(&language).map_err(err)
+    st.library.lock().unwrap_or_else(|e| e.into_inner()).categories(&language).map_err(err)
 }
 
 #[tauri::command]
 fn available_sources(st: State<AppState>, project: String, gl_mode: bool) -> R<Vec<ResourceRow>> {
-    let lib = st.library.lock().unwrap();
+    let lib = st.library.lock().unwrap_or_else(|e| e.into_inner());
     let mut rows = lib.source_texts(&project, gl_mode).map_err(err)?;
     rows.sort_by_key(|r| (!r.downloaded, r.language_slug.clone(), r.slug.clone()));
     Ok(rows)
@@ -956,17 +1023,20 @@ fn available_sources(st: State<AppState>, project: String, gl_mode: bool) -> R<V
 
 #[tauri::command]
 fn all_resources(st: State<AppState>, project: String) -> R<Vec<ResourceRow>> {
-    st.library.lock().unwrap().resources(&project).map_err(err)
+    st.library.lock().unwrap_or_else(|e| e.into_inner()).resources(&project).map_err(err)
 }
 
 #[tauri::command]
 fn source_languages(st: State<AppState>) -> R<Vec<btt_core::library::SourceLanguageRow>> {
-    st.library.lock().unwrap().source_languages().map_err(err)
+    st.library.lock().unwrap_or_else(|e| e.into_inner()).source_languages().map_err(err)
 }
 
 #[tauri::command]
 async fn download_source(app: tauri::AppHandle, language: String, project: String, resource: String) -> R<Vec<String>> {
     blocking(app, move |st| {
+    check_id("idioma", &language)?;
+    check_id("libro", &project)?;
+    check_id("recurso", &resource)?;
     let row = st
         .library
         .lock()
@@ -975,9 +1045,7 @@ async fn download_source(app: tauri::AppHandle, language: String, project: Strin
         .map_err(err)?
         .ok_or_else(|| "recurso no encontrado en el catálogo".to_string())?;
     let client = btt_core::sources::http_client().map_err(err)?;
-    let lib = st.library.lock().unwrap();
-    let r = btt_core::sources::download_resource(&lib, &row, &client, true).map_err(err);
-    drop(lib);
+    let r = btt_core::sources::download_resource(&st.library, &row, &client, true).map_err(err);
     st.clear_rc_cache();
     r
 }).await
@@ -1011,9 +1079,7 @@ async fn download_language_sources(app: tauri::AppHandle, language: String, reso
         let mut failed = vec![];
         for (i, row) in rows.iter().enumerate() {
             let _ = handle.emit("download-progress", DownloadProgress { done: i, total, current: row.project_name.clone() });
-            let lib = st.library.lock().unwrap();
-            let result = btt_core::sources::download_resource(&lib, row, &client, true);
-            drop(lib);
+            let result = btt_core::sources::download_resource(&st.library, row, &client, true);
             st.clear_rc_cache();
             match result {
                 Ok(mut d) => done.append(&mut d),
@@ -1034,7 +1100,10 @@ async fn download_language_sources(app: tauri::AppHandle, language: String, reso
 
 #[tauri::command]
 fn delete_source(st: State<AppState>, language: String, project: String, resource: String) -> R<()> {
-    st.library.lock().unwrap().delete_container(&language, &project, &resource).map_err(err)?;
+    check_id("idioma", &language)?;
+    check_id("libro", &project)?;
+    check_id("recurso", &resource)?;
+    st.library.lock().unwrap_or_else(|e| e.into_inner()).delete_container(&language, &project, &resource).map_err(err)?;
     st.clear_rc_cache();
     Ok(())
 }
@@ -1042,9 +1111,9 @@ fn delete_source(st: State<AppState>, language: String, project: String, resourc
 #[tauri::command]
 async fn update_catalog(app: tauri::AppHandle) -> R<Vec<String>> {
     blocking(app, move |st| {
-    let url = st.settings.lock().unwrap().root_catalog_url();
+    let url = st.settings.lock().unwrap_or_else(|e| e.into_inner()).root_catalog_url();
     let client = btt_core::sources::http_client().map_err(err)?;
-    let lib = st.library.lock().unwrap();
+    let lib = st.library.lock().unwrap_or_else(|e| e.into_inner());
     btt_core::sources::update_catalog(&lib, &client, &url).map_err(err)
 }).await
 }
@@ -1052,9 +1121,9 @@ async fn update_catalog(app: tauri::AppHandle) -> R<Vec<String>> {
 #[tauri::command]
 async fn update_languages(app: tauri::AppHandle) -> R<usize> {
     blocking(app, move |st| {
-    let url = st.settings.lock().unwrap().langnames_url.clone();
+    let url = st.settings.lock().unwrap_or_else(|e| e.into_inner()).langnames_url.clone();
     let client = btt_core::sources::http_client().map_err(err)?;
-    let lib = st.library.lock().unwrap();
+    let lib = st.library.lock().unwrap_or_else(|e| e.into_inner());
     btt_core::sources::update_languages(
         &lib,
         &client,
@@ -1069,7 +1138,7 @@ async fn update_languages(app: tauri::AppHandle) -> R<usize> {
 #[tauri::command]
 async fn download_index(app: tauri::AppHandle) -> R<()> {
     blocking(app, move |st| {
-    let url = st.settings.lock().unwrap().index_sqlite_url.clone();
+    let url = st.settings.lock().unwrap_or_else(|e| e.into_inner()).index_sqlite_url.clone();
     let client = btt_core::sources::http_client().map_err(err)?;
     let resp = client.get(&url).send().map_err(err)?;
     if !resp.status().is_success() {
@@ -1102,7 +1171,7 @@ fn replace_index(st: &AppState, bytes: &[u8]) -> R<()> {
         let lib = btt_core::library::Library::open(&tmp, &st.paths.containers()).map_err(err)?;
         lib.target_languages("", 1).map_err(|e| format!("índice inválido: {e}"))?;
     }
-    let mut guard = st.library.lock().unwrap();
+    let mut guard = st.library.lock().unwrap_or_else(|e| e.into_inner());
     // Cerrar la conexión actual reemplazándola por una en memoria y renombrar.
     *guard = btt_core::library::Library::open_in_memory(&st.paths.containers()).map_err(err)?;
     let backup = st.paths.index().with_extension("sqlite.bak");
@@ -1110,7 +1179,13 @@ fn replace_index(st: &AppState, bytes: &[u8]) -> R<()> {
     let _ = std::fs::rename(st.paths.index(), &backup);
     let _ = std::fs::remove_file(st.paths.index().with_extension("sqlite-wal"));
     let _ = std::fs::remove_file(st.paths.index().with_extension("sqlite-shm"));
-    std::fs::rename(&tmp, st.paths.index()).map_err(err)?;
+    if let Err(e) = std::fs::rename(&tmp, st.paths.index()) {
+        // Volver al índice anterior: la app no puede quedarse con un catálogo vacío.
+        let _ = std::fs::remove_file(&tmp);
+        let _ = std::fs::rename(&backup, st.paths.index());
+        *guard = st.paths.open_library().map_err(err)?;
+        return Err(format!("no se pudo reemplazar el índice: {e}"));
+    }
     *guard = st.paths.open_library().map_err(err)?;
     // Re-registrar contenedores descargados que no estén en el índice nuevo.
     let slugs = guard.downloaded_containers().unwrap_or_default();
@@ -1139,7 +1214,7 @@ async fn import_source_container(app: tauri::AppHandle, path: String) -> R<Strin
     } else {
         btt_core::rc::ResourceContainer::open(p).map_err(err)?
     };
-    st.library.lock().unwrap().import_container(&rc).map_err(err)?;
+    st.library.lock().unwrap_or_else(|e| e.into_inner()).import_container(&rc).map_err(err)?;
     st.clear_rc_cache();
     Ok(rc.slug())
 }).await
@@ -1198,9 +1273,14 @@ async fn import_usfm(app: tauri::AppHandle, path: String, language: String, book
     let parsed = btt_core::usfm::parse_book(&text).map_err(err)?;
     let mut warnings = vec![];
     let book_id = if !book.is_empty() { book.to_lowercase() } else { parsed.id.to_lowercase() };
+    // El código de libro viene del marcador \id del archivo: solo letras y dígitos (gen, 1jn, obs).
+    if !book_id.is_empty() && (book_id.len() > 8 || !book_id.chars().all(|c| c.is_ascii_alphanumeric())) {
+        return Err(format!("Código de libro no válido en \\id: {book_id:?}"));
+    }
     if book_id.is_empty() {
         warnings.push("El archivo no tiene marcador \\id; elige el libro.".into());
     }
+    check_id("idioma", &language).or_else(|e| if language.is_empty() { Ok(()) } else { Err(e) })?;
     let verses: usize = parsed.chapters.iter().map(|c| c.verses.len()).sum();
     for c in &parsed.chapters {
         if c.verses.is_empty() {
@@ -1219,7 +1299,7 @@ async fn import_usfm(app: tauri::AppHandle, path: String, language: String, book
     if language.is_empty() || book_id.is_empty() {
         return Ok(summary);
     }
-    let lib = st.library.lock().unwrap();
+    let lib = st.library.lock().unwrap_or_else(|e| e.into_inner());
     let lang = lib.target_language(&language).map_err(err)?.ok_or_else(|| format!("idioma {language} no encontrado"))?;
     let markers = lib.chunk_markers(&book_id).map_err(err)?;
     let project_name = lib.project_name(&book_id, "en");
@@ -1235,7 +1315,7 @@ async fn import_usfm(app: tauri::AppHandle, path: String, language: String, book
         btt_core::VERSION,
     );
     manifest.project.name = String::new();
-    manifest.add_translator(&st.profile.lock().unwrap().display_name());
+    manifest.add_translator(&st.profile.lock().unwrap_or_else(|e| e.into_inner()).display_name());
     let p = Project::create(&staging, manifest).map_err(err)?;
     btt_core::usfm::import_book(&p, &parsed, &markers).map_err(err)?;
     let outcome = btt_core::tstudio::import_dir(&p.root, &st.paths.translations(), mode, &st.author());
@@ -1247,7 +1327,10 @@ async fn import_usfm(app: tauri::AppHandle, path: String, language: String, book
 }
 
 fn uuid_simple() -> String {
-    format!("{:x}{:x}", now(), std::process::id())
+    // Con contador: dos importaciones en el mismo segundo no chocan.
+    static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    format!("{:x}{:x}{n:x}", now(), std::process::id())
 }
 
 #[tauri::command]
@@ -1255,8 +1338,11 @@ async fn export_tstudio(app: tauri::AppHandle, id: String, dest: String) -> R<St
     blocking(app, move |st| {
     let p = open_project(st, &id)?;
     let dest = if dest.is_empty() { st.paths.exports().join(format!("{id}.tstudio")) } else { PathBuf::from(dest) };
+    if dest.extension().map(|e| e != "tstudio").unwrap_or(true) {
+        return Err("El destino debe terminar en .tstudio".into());
+    }
     let out = btt_core::tstudio::export(&[&p], &dest, &st.author(), btt_core::VERSION).map_err(err)?;
-    st.backup_state.lock().unwrap().last_time.insert(id, now());
+    st.backup_state.lock().unwrap_or_else(|e| e.into_inner()).last_time.insert(id, now());
     let _ = st.save_backup_state();
     Ok(out.display().to_string())
 }).await
@@ -1275,6 +1361,9 @@ async fn export_usfm(app: tauri::AppHandle, id: String, dest: String) -> R<Strin
     } else {
         PathBuf::from(dest)
     };
+    if dest.extension().map(|e| !(e == "usfm" || e == "txt" || e == "sfm")).unwrap_or(true) {
+        return Err("El destino debe terminar en .usfm".into());
+    }
     btt_core::project::atomic_write(&dest, &usfm).map_err(err)?;
     Ok(dest.display().to_string())
 }).await
@@ -1335,7 +1424,7 @@ fn print_html(st: &AppState, id: &str, req: &PrintRequest) -> R<String> {
     let p = open_project(st, id)?;
     let m = &p.manifest;
     // Fuente: la primera traducción fuente descargada. Las notas y palabras van en su idioma.
-    let src = m.source_translations.iter().find_map(|s| st.container(&s.language_id, &m.project.id, &s.resource_id).ok().map(|rc| (s.language_id.clone(), rc)));
+    let src = m.source_translations.iter().find_map(|s| st.container(&s.language_id, source_project_slug(m), &s.resource_id).ok().map(|rc| (s.language_id.clone(), rc)));
     let (src_lang, rc) = match src {
         Some((l, rc)) => (Some(l), Some(rc)),
         None => (m.source_translations.first().map(|s| s.language_id.clone()), None),
@@ -1348,8 +1437,10 @@ fn print_html(st: &AppState, id: &str, req: &PrintRequest) -> R<String> {
         (Some(l), true) => st.container(l, "bible", "tw").ok(),
         _ => None,
     };
-    let settings = st.settings.lock().unwrap().clone();
-    let font = if req.font_family.trim().is_empty() { "Arial".to_string() } else { req.font_family.clone() };
+    let settings = st.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    // El nombre de la fuente va dentro del CSS: solo letras, dígitos, espacios y guiones.
+    let font = req.font_family.trim();
+    let font = if font.is_empty() || !font.chars().all(|c| c.is_alphanumeric() || c == ' ' || c == '-') { "Arial".to_string() } else { font.to_string() };
     let defaults = PrintOptions::default();
     let opts = PrintOptions {
         include_incomplete: req.include_incomplete,
@@ -1393,7 +1484,7 @@ pub struct UploadResult {
 }
 
 fn credentials(st: &AppState) -> R<(Credentials, String)> {
-    let p = st.profile.lock().unwrap();
+    let p = st.profile.lock().unwrap_or_else(|e| e.into_inner());
     let s = p.session.as_ref().ok_or_else(|| "Inicia sesión en el servidor para subir proyectos".to_string())?;
     Ok((Credentials { username: s.user.username.clone(), token: s.token.sha1.clone() }, s.user.username.clone()))
 }
@@ -1403,7 +1494,7 @@ async fn upload_project(app: tauri::AppHandle, id: String) -> R<UploadResult> {
     blocking(app, move |st| {
     let p = open_project(st, &id)?;
     let (creds, username) = credentials(st)?;
-    let settings = st.settings.lock().unwrap().clone();
+    let settings = st.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let client = WacsClient::new(&settings.git_api_url).map_err(err)?;
     let repo = client.create_repo(&creds.token, &username, &id).map_err(|e| match e {
         btt_core::Error::Unauthorized => "La sesión expiró. Inicia sesión de nuevo.".to_string(),
@@ -1419,7 +1510,7 @@ async fn upload_project(app: tauri::AppHandle, id: String) -> R<UploadResult> {
     }
     let push = gitrepo::push(&p.root, &repo.clone_url, &creds).map_err(err)?;
     if matches!(push, PushStatus::Ok | PushStatus::UpToDate) {
-        st.backup_state.lock().unwrap().last_time.insert(format!("upload:{id}"), now());
+        st.backup_state.lock().unwrap_or_else(|e| e.into_inner()).last_time.insert(format!("upload:{id}"), now());
         let _ = st.save_backup_state();
     }
     Ok(UploadResult {
@@ -1436,7 +1527,7 @@ async fn pull_project(app: tauri::AppHandle, id: String) -> R<MergeStatus> {
     blocking(app, move |st| {
     let p = open_project(st, &id)?;
     let (creds, username) = credentials(st)?;
-    let api = st.settings.lock().unwrap().git_api_url.clone();
+    let api = st.settings.lock().unwrap_or_else(|e| e.into_inner()).git_api_url.clone();
     let client = WacsClient::new(&api).map_err(err)?;
     let repo = client.get_repo(Some(&creds.token), &username, &id).map_err(|e| match e {
         btt_core::Error::Server { status: 404, .. } => "El proyecto no existe en el servidor".to_string(),
@@ -1455,7 +1546,7 @@ fn restore_backup_branch(st: State<AppState>, id: String) -> R<()> {
 #[tauri::command]
 async fn search_wacs(app: tauri::AppHandle, username: String, query: String) -> R<Vec<Repo>> {
     blocking(app, move |st| {
-    let api = st.settings.lock().unwrap().git_api_url.clone();
+    let api = st.settings.lock().unwrap_or_else(|e| e.into_inner()).git_api_url.clone();
     let client = WacsClient::new(&api).map_err(err)?;
     if username.trim().is_empty() {
         client.search_repos(&query, None, 50).map_err(err)
@@ -1468,7 +1559,8 @@ async fn search_wacs(app: tauri::AppHandle, username: String, query: String) -> 
 #[tauri::command]
 async fn import_from_wacs(app: tauri::AppHandle, clone_url: String, mode: ImportMode) -> R<ImportOutcome> {
     blocking(app, move |st| {
-    let creds = st.profile.lock().unwrap().session.as_ref().map(|s| Credentials { username: s.user.username.clone(), token: s.token.sha1.clone() });
+    check_clone_url(st, &clone_url)?;
+    let creds = st.profile.lock().unwrap_or_else(|e| e.into_inner()).session.as_ref().map(|s| Credentials { username: s.user.username.clone(), token: s.token.sha1.clone() });
     let staging = st.paths.temp().join(format!("clone-{}", uuid_simple()));
     gitrepo::clone(&clone_url, creds.as_ref(), &staging).map_err(err)?;
     let outcome = btt_core::tstudio::import_dir(&staging, &st.paths.translations(), mode, &st.author());
@@ -1499,11 +1591,14 @@ fn list_backups(st: State<AppState>) -> R<Vec<BackupEntry>> {
 #[tauri::command]
 async fn run_backup_now(app: tauri::AppHandle) -> R<btt_core::backup::BackupReport> {
     blocking(app, move |st| {
+    let Ok(_running) = st.backup_running.try_lock() else {
+        return Err("Ya hay un respaldo en curso".into());
+    };
     let author = st.author();
-    let mut bs = st.backup_state.lock().unwrap().clone();
+    let mut bs = st.backup_state.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let report = btt_core::backup::run(&st.paths.translations(), &st.paths.backups(), &mut bs, &author, btt_core::VERSION).map_err(err)?;
     {
-        let mut cur = st.backup_state.lock().unwrap();
+        let mut cur = st.backup_state.lock().unwrap_or_else(|e| e.into_inner());
         cur.last_hash.extend(bs.last_hash);
         cur.last_time.extend(bs.last_time);
     }
@@ -1523,7 +1618,7 @@ async fn migrate_legacy(app: tauri::AppHandle, root: String) -> R<Vec<ImportOutc
                 let _ = handle.emit("migrate-progress", &p);
             })
             .map_err(err)?;
-        let mut s = st.settings.lock().unwrap();
+        let mut s = st.settings.lock().unwrap_or_else(|e| e.into_inner());
         if !s.migrated_from.contains(&root) {
             s.migrated_from.push(root);
         }

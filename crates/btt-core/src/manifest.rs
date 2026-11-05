@@ -232,8 +232,28 @@ impl Manifest {
                 "faltan target_language.id o project.id".into(),
             ));
         }
+        m.validate_ids()?;
         m.migrate()?;
         Ok(m)
+    }
+
+    /// Los ids forman el nombre de la carpeta del proyecto: un manifest ajeno
+    /// (`.tstudio`, repositorio de WACS) no puede salirse de `translations/`.
+    fn validate_ids(&self) -> crate::Result<()> {
+        for (what, id) in [
+            ("target_language.id", self.target_language.id.as_str()),
+            ("project.id", self.project.id.as_str()),
+            ("type.id", self.type_.id.as_str()),
+            ("resource.id", self.resource.id.as_str()),
+        ] {
+            if !id.is_empty() && !safe_id(id) {
+                return Err(crate::Error::InvalidManifest(format!("{what} no válido: {id:?}")));
+            }
+        }
+        if !safe_id(&self.unique_id()) {
+            return Err(crate::Error::InvalidManifest(format!("id de proyecto no válido: {:?}", self.unique_id())));
+        }
+        Ok(())
     }
 
     /// Lleva un manifest de versiones 5–7 al formato 8 (rellena nombres,
@@ -316,6 +336,18 @@ impl Manifest {
     }
 }
 
+/// Un id puede usarse como un único componente de ruta: sin separadores,
+/// sin `..`, sin caracteres de control y sin empezar por punto. Los idiomas
+/// reales traen espacios y apóstrofos (`iba-x-kancing'k`), así que se permiten.
+pub fn safe_id(id: &str) -> bool {
+    !id.is_empty()
+        && id != "."
+        && id != ".."
+        && !id.starts_with('.')
+        && !id.chars().any(|c| matches!(c, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') || c.is_control())
+        && id.trim() == id
+}
+
 pub fn unique_id(lang: &str, project: &str, type_: &str, resource: &str) -> String {
     if type_ == "text" {
         format!("{lang}_{project}_{type_}_{resource}")
@@ -339,6 +371,18 @@ pub fn parse_unique_id(id: &str) -> Option<(String, String, String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rechaza_ids_que_salen_de_la_carpeta() {
+        let base = r#"{"package_version":8,"generator":{"name":"btt-writer","build":"1"},"target_language":{"id":"aa","name":"A","direction":"ltr"},"project":{"id":"mrk","name":"Mark"},"type":{"id":"text","name":"Text"},"resource":{"id":"RES","name":"R"},"source_translations":[],"translators":[],"finished_chunks":[]}"#;
+        assert!(Manifest::parse(&base.replace("RES", "reg")).is_ok());
+        for bad in ["../../../x", "C:/Users/x", "a/b", "a\\b", "..", ".oculto", "a\u{0}b", " reg"] {
+            let json = base.replace("RES", &bad.replace('\\', "\\\\"));
+            assert!(Manifest::parse(&json).is_err(), "aceptó resource.id {bad:?}");
+        }
+        // Idiomas reales con espacios o apóstrofos siguen siendo válidos.
+        assert!(safe_id("iba-x-kancing'k") && safe_id("hni-x-Bu4Du1 Hani"));
+    }
 
     const REAL: &str = r#"{
   "package_version": 8,

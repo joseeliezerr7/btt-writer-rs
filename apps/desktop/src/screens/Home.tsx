@@ -57,8 +57,13 @@ export default function HomeScreen() {
     api.listBooks(lang === "es" ? "es-419" : "en").then(setBooks).catch(() => {});
     if (!isTauri) return;
     const un = listen<string[]>("backup-done", () => load());
+    const unFailed = listen<[string, string][]>("backup-failed", (ev) => {
+      const detail = ev.payload.map(([pid, e]) => `${pid}: ${e}`).join(" · ");
+      fb.toast(`${t("home.backup_failed")} ${detail}`, "error");
+    });
     return () => {
       un.then((f) => f()).catch(() => {});
+      unFailed.then((f) => f()).catch(() => {});
     };
   }, [lang]);
   useEffect(() => {
@@ -227,12 +232,12 @@ export default function HomeScreen() {
 
               <div className="toolbar">
                 <span className="small muted">{t("home.sort")}</span>
-                <select className="select" value={settings.sort_by} onChange={(e) => updateSettings({ sort_by: e.target.value })}>
+                <select className="select" value={settings.sort_by} onChange={(e) => updateSettings({ sort_by: e.target.value }).catch(fb.error)}>
                   <option value="project">{t("home.sort.project")}</option>
                   <option value="language">{t("home.sort.language")}</option>
                   <option value="progress">{t("home.sort.progress")}</option>
                 </select>
-                <select className="select" value={settings.book_order} onChange={(e) => updateSettings({ book_order: e.target.value })}>
+                <select className="select" value={settings.book_order} onChange={(e) => updateSettings({ book_order: e.target.value }).catch(fb.error)}>
                   <option value="bible">{t("home.book_order")}</option>
                   <option value="alpha">{t("home.alpha_order")}</option>
                 </select>

@@ -25,12 +25,20 @@ pub struct Author {
 
 impl Author {
     pub fn new(name: &str, email: &str) -> Self {
-        let name = if name.trim().is_empty() { "BTT Writer" } else { name.trim() };
-        let email = if email.trim().is_empty() { "btt-writer@localhost" } else { email.trim() };
-        Author { name: name.into(), email: email.into() }
+        // git rechaza `<`, `>` y saltos de línea en la firma: un correo escrito como
+        // `<ana@x.org>` dejaría sin commits (y sin respaldos) a todo el proyecto.
+        let clean = |s: &str| s.chars().filter(|c| !matches!(c, '<' | '>') && !c.is_control()).collect::<String>().trim().to_string();
+        let name = clean(name);
+        let email = clean(email);
+        let name = if name.is_empty() { "BTT Writer".to_string() } else { name };
+        let email = if email.is_empty() { "btt-writer@localhost".to_string() } else { email };
+        Author { name, email }
     }
     fn signature(&self) -> Result<Signature<'static>> {
-        Ok(Signature::now(&self.name, &self.email)?)
+        match Signature::now(&self.name, &self.email) {
+            Ok(s) => Ok(s),
+            Err(_) => Ok(Signature::now("BTT Writer", "btt-writer@localhost")?),
+        }
     }
 }
 
@@ -86,6 +94,39 @@ pub fn open_or_init(path: &Path) -> Result<Repository> {
     }
 }
 
+/// Neutraliza un `.git` que viene de fuera (un `.tstudio` o un clon ajeno) antes de
+/// usarlo: `core.worktree`, un `.git` que es archivo (`gitdir: ...`), `include.path`
+/// o hooks podrían redirigir las operaciones de git a otra carpeta del disco o
+/// ejecutar código. Se deja solo la configuración mínima; los remotos se vuelven
+/// a fijar por URL en cada subida.
+pub fn sanitize_imported(path: &Path) -> Result<()> {
+    let git = path.join(".git");
+    if git.is_file() {
+        std::fs::remove_file(&git)?;
+        return Ok(());
+    }
+    if !git.is_dir() {
+        return Ok(());
+    }
+    std::fs::write(
+        git.join("config"),
+        "[core]\n\trepositoryformatversion = 0\n\tfilemode = false\n\tbare = false\n\tlogallrefupdates = true\n",
+    )?;
+    let hooks = git.join("hooks");
+    if hooks.is_dir() {
+        let _ = std::fs::remove_dir_all(&hooks);
+    }
+    for extra in ["worktrees", "modules", "commondir"] {
+        let p = git.join(extra);
+        if p.is_dir() {
+            let _ = std::fs::remove_dir_all(&p);
+        } else if p.is_file() {
+            let _ = std::fs::remove_file(&p);
+        }
+    }
+    Ok(())
+}
+
 /// Borra archivos `.lock` que quedan tras un cierre abrupto.
 pub fn unlock(path: &Path) {
     let git = path.join(".git");
@@ -104,9 +145,30 @@ fn head_commit(repo: &Repository) -> Option<git2::Commit<'_>> {
     repo.head().ok().and_then(|h| h.peel_to_commit().ok())
 }
 
+/// Borra un `index.lock` solo si es viejo (quedó de un cierre abrupto). Uno reciente
+/// pertenece a otra operación en curso y borrarlo le haría fallar la escritura.
+fn unlock_stale(path: &Path) {
+    let lock = path.join(".git").join("index.lock");
+    let stale = std::fs::metadata(&lock)
+        .and_then(|m| m.modified())
+        .map(|t| t.elapsed().map(|d| d.as_secs() > 120).unwrap_or(true))
+        .unwrap_or(false);
+    if stale {
+        unlock(path);
+    }
+}
+
 /// Añade todos los cambios y hace commit. Devuelve `None` si no había cambios.
+/// Toma el candado del proyecto: ninguna escritura de chunk ni otro commit se
+/// cruza con este.
 pub fn commit_all(path: &Path, author: &Author, message: &str) -> Result<Option<String>> {
-    unlock(path);
+    let _guard = crate::project::lock_project(path);
+    commit_all_unlocked(path, author, message)
+}
+
+/// Variante para quien ya tiene el candado del proyecto (pull, merge, export).
+pub(crate) fn commit_all_unlocked(path: &Path, author: &Author, message: &str) -> Result<Option<String>> {
+    unlock_stale(path);
     let repo = open_or_init(path)?;
     let mut index = repo.index()?;
     index.add_all(["*"].iter(), IndexAddOption::DEFAULT, None)?;
@@ -317,7 +379,10 @@ pub fn push(path: &Path, url: &str, creds: &Credentials) -> Result<PushStatus> {
 /// Los conflictos en `manifest.json` se resuelven uniendo ambos; `LICENSE.md`
 /// conserva el local; el resto queda con marcadores para resolver en la app.
 pub fn pull(path: &Path, url: &str, creds: Option<&Credentials>, author: &Author) -> Result<MergeStatus> {
-    commit_all(path, author, AUTOSAVE_MESSAGE)?;
+    // El candado se mantiene durante todo el pull: el checkout forzado del final
+    // pisaría cualquier chunk guardado entre el commit inicial y ese momento.
+    let _guard = crate::project::lock_project(path);
+    commit_all_unlocked(path, author, AUTOSAVE_MESSAGE)?;
     create_backup_branch(path)?;
     let repo = open_or_init(path)?;
     set_remote(&repo, "origin", url)?;
@@ -326,8 +391,9 @@ pub fn pull(path: &Path, url: &str, creds: Option<&Credentials>, author: &Author
 
 /// Fusiona otro proyecto local (p. ej. uno importado) en este.
 pub fn merge_local(path: &Path, other: &Path, author: &Author) -> Result<MergeStatus> {
-    commit_all(path, author, AUTOSAVE_MESSAGE)?;
     commit_all(other, author, AUTOSAVE_MESSAGE)?;
+    let _guard = crate::project::lock_project(path);
+    commit_all_unlocked(path, author, AUTOSAVE_MESSAGE)?;
     create_backup_branch(path)?;
     let repo = open_or_init(path)?;
     let url = other.to_string_lossy().replace('\\', "/");
@@ -480,6 +546,37 @@ pub fn conflicted_files(path: &Path) -> Result<Vec<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn un_git_importado_no_redirige_el_worktree() {
+        let tmp = tempfile::tempdir().unwrap();
+        let victim = tmp.path().join("victima");
+        std::fs::create_dir_all(&victim).unwrap();
+        std::fs::write(victim.join("secreto.txt"), "no debe entrar en ningún commit").unwrap();
+        let proj = tmp.path().join("proyecto");
+        std::fs::create_dir_all(&proj).unwrap();
+        std::fs::write(proj.join("01.txt"), "hola").unwrap();
+        let repo = Repository::init(&proj).unwrap();
+        repo.config().unwrap().set_str("core.worktree", victim.to_str().unwrap()).unwrap();
+        drop(repo);
+
+        sanitize_imported(&proj).unwrap();
+        let author = Author { name: "t".into(), email: "t@x".into() };
+        commit_all(&proj, &author, "import").unwrap();
+        let repo = Repository::open(&proj).unwrap();
+        assert_eq!(repo.workdir().unwrap().canonicalize().unwrap(), proj.canonicalize().unwrap());
+        let tree = repo.head().unwrap().peel_to_tree().unwrap();
+        assert!(tree.get_name("01.txt").is_some());
+        assert!(tree.get_name("secreto.txt").is_none());
+    }
+
+    #[test]
+    fn un_git_que_es_archivo_se_elimina() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(".git"), "gitdir: C:/otro/sitio/.git").unwrap();
+        sanitize_imported(tmp.path()).unwrap();
+        assert!(!tmp.path().join(".git").exists());
+    }
     use crate::manifest::{IdName, TargetLanguage};
     use crate::project::Project;
 

@@ -74,19 +74,37 @@ pub fn add_missing_verses(text: &str, expected: &[u32]) -> String {
         return text.to_string();
     }
     let present = usfm::verse_numbers(text);
-    let missing: Vec<u32> = expected.iter().copied().filter(|v| !present.contains(v)).collect();
+    let mut missing: Vec<u32> = expected.iter().copied().filter(|v| !present.contains(v)).collect();
     if missing.is_empty() {
         return text.to_string();
     }
-    let mut prefix = String::new();
-    for m in missing {
-        prefix.push_str(&format!("\\v {m} "));
-    }
+    missing.sort_unstable();
     if text.trim().is_empty() {
-        prefix.trim_end().to_string()
-    } else {
-        format!("{prefix}{text}")
+        return missing.iter().map(|m| format!("\\v {m}")).collect::<Vec<_>>().join(" ");
     }
+    // Cada marcador que falta se inserta en su posición: antes del primer verso
+    // presente mayor que él (así `\v 2 b` con [1,2,3] da `\v 1 \v 2 b \v 3`).
+    let re = regex::Regex::new(r"\\v\s+(\d+)").expect("regex de versos");
+    let mut out = String::new();
+    let mut cursor = 0;
+    let mut missing = missing.into_iter().peekable();
+    for m in re.captures_iter(text) {
+        let n: u32 = m[1].parse().unwrap_or(0);
+        let at = m.get(0).map(|g| g.start()).unwrap_or(0);
+        while matches!(missing.peek(), Some(&mm) if mm < n) {
+            out.push_str(&text[cursor..at]);
+            cursor = at;
+            out.push_str(&format!("\\v {} ", missing.next().unwrap_or(0)));
+        }
+    }
+    out.push_str(&text[cursor..]);
+    for mm in missing {
+        if !out.ends_with(' ') && !out.ends_with('\n') {
+            out.push(' ');
+        }
+        out.push_str(&format!("\\v {mm} "));
+    }
+    out.trim_end().to_string()
 }
 
 /// Entrada de ayuda (nota, pregunta o palabra) tal como se guarda en los
@@ -201,7 +219,12 @@ mod tests {
     #[test]
     fn adds_missing_verse_markers() {
         assert_eq!(add_missing_verses("", &[1, 2]), "\\v 1 \\v 2");
-        assert_eq!(add_missing_verses("\\v 2 b", &[1, 2, 3]), "\\v 1 \\v 3 \\v 2 b");
+        assert_eq!(add_missing_verses("\\v 2 b", &[1, 2, 3]), "\\v 1 \\v 2 b \\v 3");
+        assert_eq!(add_missing_verses("\\c 1 \\v 2 b", &[1, 2]), "\\c 1 \\v 1 \\v 2 b");
+        assert_eq!(add_missing_verses("", &[1, 2]), "\\v 1 \\v 2");
+        // Lo que la app añade no debe salir luego como "versos en desorden".
+        let issues = validate_chunk(&add_missing_verses("\\v 2 b", &[1, 2, 3]), &[1, 2, 3]);
+        assert!(!issues.iter().any(|i| matches!(i, Issue::OutOfOrder { .. })), "{issues:?}");
         assert_eq!(add_missing_verses("\\v 1 a \\v 2 b", &[1, 2]), "\\v 1 a \\v 2 b");
         assert_eq!(add_missing_verses("texto", &[]), "texto");
     }

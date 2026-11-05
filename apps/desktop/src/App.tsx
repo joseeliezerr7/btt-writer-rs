@@ -83,10 +83,11 @@ export default function App() {
 
   const updateSettings = useCallback(
     async (patch: Partial<Settings>) => {
-      const next = { ...settings, ...patch };
-      setSettings(next);
+      // Actualización funcional: dos cambios seguidos no se pisan entre sí.
+      let next: Settings = settings;
+      setSettings((cur) => (next = { ...cur, ...patch }));
       const saved = await api.saveSettings(next);
-      setSettings(saved);
+      setSettings((cur) => ({ ...cur, ...saved, ...patch }));
     },
     [settings],
   );

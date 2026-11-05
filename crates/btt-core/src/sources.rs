@@ -8,6 +8,7 @@ use crate::{Error, Result};
 use serde::Deserialize;
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::sync::Mutex;
 use std::time::Duration;
 
 pub const USER_AGENT: &str = "BTT-Writer/3.0";
@@ -446,7 +447,11 @@ fn yaml_str(s: &str) -> String {
 
 /// Descarga un recurso del catálogo y lo guarda como contenedor.
 /// Devuelve los slugs de contenedores creados (el libro y, si existen, tN/tQ/tW).
-pub fn download_resource(lib: &Library, row: &ResourceRow, client: &reqwest::blocking::Client, with_helps: bool) -> Result<Vec<String>> {
+/// La biblioteca se recibe tras su candado y se toma solo para consultar e importar:
+/// nunca durante una descarga, para que el resto de la app (lista de proyectos,
+/// apertura de capítulos) no se quede esperando a la red.
+pub fn download_resource(lib: &Mutex<Library>, row: &ResourceRow, client: &reqwest::blocking::Client, with_helps: bool) -> Result<Vec<String>> {
+    let lock = || lib.lock().unwrap_or_else(|e| e.into_inner());
     let mut done = vec![];
     if row.url.is_empty() {
         return Err(Error::Other(format!("el recurso {} no tiene URL de descarga", row.container_slug())));
@@ -454,14 +459,14 @@ pub fn download_resource(lib: &Library, row: &ResourceRow, client: &reqwest::blo
     match row.r#type.as_str() {
         "book" => {
             let src = fetch_text(client, &row.url)?;
-            let tw_cat = lib
-                .tw_assignments_url(&row.language_slug, &row.project_slug, &row.slug)?
-                .and_then(|u| fetch_text(client, &u).ok());
+            let tw_url = lock().tw_assignments_url(&row.language_slug, &row.project_slug, &row.slug)?;
+            let tw_cat = tw_url.and_then(|u| fetch_text(client, &u).ok());
             let rc = book_container(row, &src, tw_cat.as_deref())?;
-            lib.import_container(&rc)?;
+            lock().import_container(&rc)?;
             done.push(rc.slug());
             if with_helps {
-                for r in lib.resources(&row.project_slug)? {
+                let helps = lock().resources(&row.project_slug)?;
+                for r in helps {
                     if r.language_slug == row.language_slug && (r.slug == "tn" || r.slug == "tq") && !r.url.is_empty() {
                         match download_resource(lib, &r, client, false) {
                             Ok(mut d) => done.append(&mut d),
@@ -469,7 +474,8 @@ pub fn download_resource(lib: &Library, row: &ResourceRow, client: &reqwest::blo
                         }
                     }
                 }
-                for r in lib.resources("bible")? {
+                let words = lock().resources("bible")?;
+                for r in words {
                     if r.language_slug == row.language_slug && r.slug == "tw" && !r.url.is_empty() && !r.downloaded {
                         match download_resource(lib, &r, client, false) {
                             Ok(mut d) => done.append(&mut d),
@@ -482,13 +488,13 @@ pub fn download_resource(lib: &Library, row: &ResourceRow, client: &reqwest::blo
         "help" => {
             let json = fetch_text(client, &row.url)?;
             let rc = if row.slug == "tq" { questions_container(row, &json)? } else { notes_container(row, &json)? };
-            lib.import_container(&rc)?;
+            lock().import_container(&rc)?;
             done.push(rc.slug());
         }
         "dict" => {
             let json = fetch_text(client, &row.url)?;
             let rc = words_container(row, &json)?;
-            lib.import_container(&rc)?;
+            lock().import_container(&rc)?;
             done.push(rc.slug());
         }
         other => return Err(Error::Other(format!("tipo de recurso no soportado: {other}"))),

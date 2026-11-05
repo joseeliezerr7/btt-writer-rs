@@ -547,7 +547,8 @@ pub fn render_document(project: &Project, sources: PrintSources<'_>, opts: &Prin
         if !any {
             continue;
         }
-        let anchor = format!("ch-{ch}");
+        // El nombre del capítulo es un nombre de carpeta: en el ancla solo entran caracteres seguros.
+        let anchor = format!("ch-{}", ch.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect::<String>());
         toc.push_str(&format!("<li><a href=\"#{anchor}\">{}</a></li>", esc(&ch_title)));
         chapters_html.push_str(&format!("<section class=\"chapter\" id=\"{anchor}\"><h2>{}</h2>", esc(&ch_title)));
         let reference = project.read_chapter_reference(ch)?;

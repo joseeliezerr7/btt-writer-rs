@@ -177,7 +177,8 @@ impl ResourceContainer {
             }
             let raw = entry.path()?.to_string_lossy().replace('\\', "/");
             let clean = normalize_path(&raw)?;
-            let mut data = Vec::with_capacity(entry.size() as usize);
+            // El tamaño de la cabecera tar no es de fiar: un valor enorme abortaría la app al reservar.
+            let mut data = Vec::with_capacity(entry.size().min(8 * 1024 * 1024) as usize);
             entry.read_to_end(&mut data)?;
             files.insert(clean, data);
         }

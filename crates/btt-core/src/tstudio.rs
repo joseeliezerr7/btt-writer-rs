@@ -100,7 +100,9 @@ pub fn export(projects: &[&Project], dest: &Path, author: &Author, build: &str) 
             .unix_permissions(0o644);
         let mut tts = vec![];
         for p in projects {
-            gitrepo::commit_all(&p.root, author, gitrepo::AUTOSAVE_MESSAGE)?;
+            // Candado durante todo el recorrido: el zip no mezcla un `.git` a medio escribir.
+            let _guard = crate::project::lock_project(&p.root);
+            gitrepo::commit_all_unlocked(&p.root, author, gitrepo::AUTOSAVE_MESSAGE)?;
             let id = p.id();
             tts.push(ArchiveTranslation {
                 id: id.clone(),
@@ -268,16 +270,28 @@ fn import_dir_inner(dir: &Path, translations_dir: &Path, mode: ImportMode, autho
     if !dir.join("LICENSE.md").is_file() {
         crate::project::atomic_write(&dir.join("LICENSE.md"), crate::project::LICENSE_MD)?;
     }
+    gitrepo::sanitize_imported(dir)?;
     gitrepo::unlock(dir);
     gitrepo::commit_all(dir, author, gitrepo::AUTOSAVE_MESSAGE)?;
 
     let dest = translations_dir.join(&id);
+    debug_assert_eq!(dest.parent(), Some(translations_dir));
     if dest.exists() {
         return Ok(match mode {
             ImportMode::Skip => ImportOutcome { id, status: ImportStatus::Exists },
             ImportMode::Overwrite => {
-                crate::project::remove_dir_all_robust(&dest)?;
-                move_dir(dir, &dest)?;
+                // El proyecto anterior se aparta (renombrado) y solo se borra cuando el nuevo
+                // ya está en su sitio: si el movimiento falla, el original sigue ahí.
+                let _guard = crate::project::lock_project(&dest);
+                let trash = translations_dir.join(format!(".trash-{id}-{}", std::process::id()));
+                let _ = crate::project::remove_dir_all_robust(&trash);
+                std::fs::rename(&dest, &trash)?;
+                if let Err(e) = move_dir(dir, &dest) {
+                    let _ = crate::project::remove_dir_all_robust(&dest);
+                    let _ = std::fs::rename(&trash, &dest);
+                    return Err(e);
+                }
+                let _ = crate::project::remove_dir_all_robust(&trash);
                 ImportOutcome { id, status: ImportStatus::Overwritten }
             }
             ImportMode::Merge => match gitrepo::merge_local(&dest, dir, author)? {
