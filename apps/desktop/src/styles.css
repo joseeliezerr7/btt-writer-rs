@@ -564,6 +564,15 @@ mark { background: #ffe58a; color: inherit; border-radius: 2px; }
 .verse-arranger.active .va-gap { width: .6em; background: color-mix(in srgb, var(--primary) 18%, transparent); border: 1px dashed color-mix(in srgb, var(--primary) 55%, transparent); cursor: pointer; }
 .verse-arranger .va-gap.over, .verse-arranger.active .va-gap:hover { width: 1.1em; background: var(--primary); border-color: var(--primary); }
 .rtl.verse-arranger { direction: rtl; }
+
+/* Editor con los versículos como fichas dentro del texto */
+.verse-editor { min-height: 140px; white-space: pre-wrap; overflow-wrap: anywhere; cursor: text; resize: none; }
+.verse-editor:empty::before { content: attr(data-placeholder); color: var(--muted); opacity: .55; pointer-events: none; }
+.verse-editor.drop-over { box-shadow: inset 0 0 0 2px var(--primary); border-radius: 8px; }
+.ve-marker { display: inline-grid; place-items: center; min-width: 24px; height: 22px; padding: 0 .4rem; margin: 0 .15rem 0 .05rem; border-radius: 999px; background: var(--primary-soft); color: var(--primary); border: 1.5px solid var(--primary); font-family: var(--font-ui); font-size: .74rem; font-weight: 800; line-height: 1; vertical-align: .12em; cursor: grab; user-select: none; -webkit-user-select: none; transition: transform .1s, background .12s; }
+.ve-marker:hover { transform: translateY(-1px); background: color-mix(in srgb, var(--primary) 18%, var(--surface)); }
+.ve-marker:active { cursor: grabbing; }
+.ve-marker.picked { background: var(--primary); color: #fff; box-shadow: 0 0 0 3px var(--primary-soft); }
 @media (max-width: 900px) {
   .selection-bar { position: static; }
   .user-chip > .ellipsis { max-width: 110px; }

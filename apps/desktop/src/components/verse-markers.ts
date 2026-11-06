@@ -122,11 +122,58 @@ export function snapToWordBoundary(text: string, pos: number): number {
  * Inserta `\\v N` en la posición dada (ajustada al borde de palabra) con los
  * espacios necesarios. Devuelve el texto y la posición del cursor tras el marcador.
  */
-export function insertMarkerAt(text: string, n: number, pos: number): { text: string; caret: number } {
+export function insertMarkerAt(text: string, n: number | string, pos: number): { text: string; caret: number } {
   const at = snapToWordBoundary(text, pos);
   const before = text.slice(0, at);
   const after = text.slice(at).replace(/^[ \t]+/, "");
   const lead = before.length && !/\s$/.test(before) ? " " : "";
   const snippet = `${lead}\\v ${n} `;
   return { text: before + snippet + after, caret: before.length + snippet.length };
+}
+
+/** Segmentos del editor: texto plano y marcadores `\v N` (cada marcador se lleva el espacio que le sigue). */
+export type Segment = { kind: "text"; raw: string } | { kind: "marker"; n: string; raw: string };
+
+const MARKER_RE = /\\v\s+(\d+(?:-\d+)?[a-z]?)(?![\w-]) ?/g;
+
+export function segment(text: string): Segment[] {
+  const out: Segment[] = [];
+  let i = 0;
+  for (const m of text.matchAll(MARKER_RE)) {
+    const at = m.index ?? 0;
+    if (at > i) out.push({ kind: "text", raw: text.slice(i, at) });
+    out.push({ kind: "marker", n: m[1], raw: m[0] });
+    i = at + m[0].length;
+  }
+  if (i < text.length) out.push({ kind: "text", raw: text.slice(i) });
+  return out;
+}
+
+/** Posición (inicio y fin) de la primera aparición del marcador `\v n` en el texto, o null. */
+export function findVerse(text: string, n: string): { start: number; end: number } | null {
+  for (const m of text.matchAll(MARKER_RE)) {
+    if (m[1] === n) return { start: m.index ?? 0, end: (m.index ?? 0) + m[0].length };
+  }
+  return null;
+}
+
+/** Quita la primera aparición de `\v n`, dejando un solo espacio entre lo que había a los lados. */
+export function removeVerse(text: string, n: string): string {
+  const at = findVerse(text, n);
+  if (!at) return text;
+  const before = text.slice(0, at.start);
+  const after = text.slice(at.end);
+  if (/\s$/.test(before) && /^[ \t]/.test(after)) return before + after.replace(/^[ \t]+/, "");
+  return before + after;
+}
+
+/** Mueve el marcador `\v n` a la posición `pos` del texto (ajustada al borde de palabra). */
+export function moveVerseTo(text: string, n: string, pos: number): { text: string; caret: number } {
+  const at = findVerse(text, n);
+  if (!at) return insertMarkerAt(text, n, pos);
+  const without = removeVerse(text, n);
+  let p = pos;
+  if (pos >= at.end) p = pos - (text.length - without.length);
+  else if (pos > at.start) p = at.start;
+  return insertMarkerAt(without, n, Math.max(0, Math.min(p, without.length)));
 }

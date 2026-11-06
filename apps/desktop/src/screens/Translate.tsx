@@ -19,6 +19,8 @@ import { formatDate, useT } from "../i18n";
 import { Button, Dialog, IconBadge, Logo, SimpleMarkdown, Spinner, Switch, Tabs, useFeedback } from "../components/ui";
 import { bookName, DownloadLanguageButton, ExportDialog, issueText, PrintDialog, SourceSelectionDialog } from "../components/dialogs";
 import { insertMarkerAt, MARKER_MIME, normalizeVerseMarkers, removeMarker, VerseArranger } from "../components/verses";
+import { VerseEditor, VERSE_MIME, type VerseEditorHandle } from "../components/verse-editor";
+import { removeVerse } from "../components/verse-markers";
 
 /** Lista numerada de la verificación previa a marcar un chunk como terminado. */
 function Checklist({ t }: { t: (k: string) => string }) {
@@ -32,15 +34,6 @@ function Checklist({ t }: { t: (k: string) => string }) {
   );
 }
 
-/** Posición del texto bajo el puntero dentro de un `<textarea>` (null si el navegador no la sabe). */
-function caretIndexAt(el: HTMLTextAreaElement, x: number, y: number): number | null {
-  const doc = document as Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null };
-  const p = doc.caretPositionFromPoint?.(x, y);
-  if (p && (p.offsetNode === el || el.contains(p.offsetNode))) return p.offset;
-  const r = doc.caretRangeFromPoint?.(x, y);
-  if (r && (r.startContainer === el || el.contains(r.startContainer))) return r.startOffset;
-  return null;
-}
 
 type Mode = "read" | "chunk" | "review";
 
@@ -474,7 +467,19 @@ function ChunkCard(props: {
   const [history, setHistory] = useState<HistoryEntry[] | null>(null);
   const [sourceWord, setSourceWord] = useState<WordArticle | null>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Los títulos usan un área de texto simple; los chunks con versículos, el editor con fichas.
   const textRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<VerseEditorHandle>(null);
+  const caretNow = () => (isTitle ? textRef.current?.selectionStart : editorRef.current?.getCaret()) ?? text.length;
+  const focusAt = (c: number) => {
+    if (isTitle) {
+      const el = textRef.current;
+      if (el) { el.focus(); el.setSelectionRange(c, c); }
+    } else {
+      editorRef.current?.focus();
+      editorRef.current?.setCaret(c);
+    }
+  };
   // Modo "Mover versículos": el texto se muestra como palabras y fichas arrastrables.
   const [arrange, setArrange] = useState(false);
   // Versículo de la barra elegido con un toque, a la espera de tocar dónde va.
@@ -569,7 +574,7 @@ function ChunkCard(props: {
       props.onChanged();
     }
     setEditing(true);
-    setTimeout(() => textRef.current?.focus(), 50);
+    setTimeout(() => (isTitle ? textRef.current?.focus() : editorRef.current?.focus()), 50);
   };
 
   /** Lo escrito en el área de texto, separando lo que quede pegado a un marcador `\v`. */
@@ -588,12 +593,11 @@ function ChunkCard(props: {
   }, [text]);
 
   const insertFootnote = () => {
-    const el = textRef.current;
-    if (!el) return;
-    const pos = el.selectionStart ?? text.length;
+    const pos = caretNow();
     const note = " \\f + \\ft " + (window.prompt(t("translate.footnote")) ?? "").trim() + "\\f* ";
     if (note.trim() === "\\f + \\ft\\f*") return;
     save(text.slice(0, pos) + note + text.slice(pos));
+    setTimeout(() => focusAt(pos + note.length), 50);
   };
 
   /** Versos ya marcados en el borrador (`\v 3` o rangos `\v 3-4`). */
@@ -607,19 +611,11 @@ function ChunkCard(props: {
   /** Inserta `\v N` en el cursor (o en la posición dada, o al final) con los espacios necesarios. */
   const insertVerse = (n: number, at?: number) => {
     if (versesInText.has(n)) return;
-    const el = textRef.current;
-    const pos = at ?? el?.selectionStart ?? text.length;
+    const pos = at ?? caretNow();
     const r = insertMarkerAt(text, n, pos);
     save(r.text);
-    const caret = r.caret;
-    setTimeout(() => {
-      if (el) {
-        el.focus();
-        el.setSelectionRange(caret, caret);
-      }
-    }, 0);
+    setTimeout(() => focusAt(r.caret), 50);
   };
-
   const resolveConflict = async (option: string) => {
     await api.writeChunk(id, chapter, chunk.id, option).catch(fb.error);
     await reload();
@@ -751,11 +747,17 @@ function ChunkCard(props: {
             {!isTitle && !isHelps && expected.length > 0 && (
               <div
                 className={"verse-chips" + (overChips ? " drop-remove" : "")}
-                title={arrange ? t("translate.drop_to_remove") : t("translate.verse_chips_hint")}
-                // En modo "Mover versículos" la barra también sirve para quitar un marcador: se arrastra hasta aquí.
-                onDragOver={(e) => { if (e.dataTransfer.types.includes(MARKER_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (!overChips) setOverChips(true); } }}
+                title={overChips ? t("translate.drop_to_remove") : t("translate.verse_chips_hint")}
+                // La barra también sirve para quitar un marcador: se arrastra hasta aquí desde el editor o desde "Mover versículos".
+                onDragOver={(e) => { const ty = e.dataTransfer.types; if (ty.includes(MARKER_MIME) || ty.includes(VERSE_MIME)) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; if (!overChips) setOverChips(true); } }}
                 onDragLeave={() => setOverChips(false)}
-                onDrop={(e) => { const idx = e.dataTransfer.getData(MARKER_MIME); setOverChips(false); if (idx !== "") { e.preventDefault(); save(removeMarker(text, Number(idx))); } }}
+                onDrop={(e) => {
+                  setOverChips(false);
+                  const n = e.dataTransfer.getData(VERSE_MIME);
+                  const idx = e.dataTransfer.getData(MARKER_MIME);
+                  if (n !== "") { e.preventDefault(); save(removeVerse(text, n)); }
+                  else if (idx !== "") { e.preventDefault(); save(removeMarker(text, Number(idx))); }
+                }}
               >
                 <span className="small muted" style={{ marginRight: ".2rem" }}>{t("translate.verse_chips")}</span>
                 {expected.map((v) => {
@@ -779,7 +781,7 @@ function ChunkCard(props: {
             )}
             {arrange ? (
               <VerseArranger text={text} rtl={props.rtl} onChange={(v) => save(v)} pickedNew={pickedNew} onPlacedNew={() => setPickedNew(null)} />
-            ) : (
+            ) : isTitle ? (
               <textarea
                 ref={textRef}
                 className={"editor" + (props.rtl ? " rtl" : "")}
@@ -787,18 +789,18 @@ function ChunkCard(props: {
                 placeholder={placeholder}
                 onChange={onEditorChange}
                 onFocus={() => { if (!props.review) setEditing(true); }}
-                onDragOver={(e) => { if (e.dataTransfer.types.includes("text/plain")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } }}
-                // Una ficha de versículo soltada sobre el texto se coloca en la palabra bajo el puntero
-                // (si el navegador no sabe la posición, lo inserta él mismo donde cayó).
-                onDrop={(e) => {
-                  const m = /^\\v\s+(\d+)\s*$/.exec(e.dataTransfer.getData("text/plain"));
-                  if (!m) return;
-                  const pos = caretIndexAt(e.currentTarget, e.clientX, e.clientY);
-                  if (pos === null) return;
-                  e.preventDefault();
-                  insertVerse(Number(m[1]), pos);
-                }}
                 spellCheck={false}
+              />
+            ) : (
+              // Los versículos van como fichas dentro del texto: se arrastran a otra palabra
+              // o a la barra de arriba para quitarlos; una ficha de la barra se suelta donde va.
+              <VerseEditor
+                ref={editorRef}
+                text={text}
+                rtl={props.rtl}
+                placeholder={placeholder}
+                onChange={save}
+                onFocus={() => { if (!props.review) setEditing(true); }}
               />
             )}
           </>
