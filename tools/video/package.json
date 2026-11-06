@@ -1,0 +1,8 @@
+{
+  "name": "btt-writer-videos",
+  "private": true,
+  "description": "Grabador de videos de presentación de BTT Writer. Ver README.md.",
+  "dependencies": {
+    "playwright": "1.48.2"
+  }
+}
