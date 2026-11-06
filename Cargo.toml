@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/btt-core", "apps/desktop/src-tauri"]
 
 [workspace.package]
-version = "3.0.6"
+version = "3.0.7"
 edition = "2021"
 license = "MIT"
 authors = ["Solucionestechn <solucionestechn87@gmail.com>"]
