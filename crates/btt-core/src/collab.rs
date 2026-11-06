@@ -3,8 +3,10 @@
 //! Varias personas traducen el mismo libro desde dispositivos distintos. Cada
 //! una tiene su copia local completa (git) y la app sincroniza sola: guarda,
 //! baja lo del servidor, lo fusiona y sube. Los chunks son archivos separados,
-//! así que trabajar en versículos distintos nunca choca; dos cambios al mismo
-//! chunk dejan marcadores de conflicto que se resuelven en la app.
+//! así que trabajar en versículos distintos nunca choca. El chunk que se está
+//! editando se retiene (`hold`) y solo se comparte al cerrarlo con "Listo"; si
+//! otra persona lo cambió mientras tanto, queda un único conflicto que se
+//! resuelve en la app.
 //!
 //! `collab.json` (dentro del proyecto, viaja por git) guarda las *reservas*:
 //! quién está traduciendo cada chunk. Son avisos, no candados: caducan solas y
@@ -175,11 +177,19 @@ fn is_chunk(path: &str) -> bool {
 pub fn sync(root: &Path, url: &str, creds: Option<&Credentials>, author: &Author, opts: &SyncOptions) -> SyncReport {
     let now = now();
     let mut report = SyncReport { at: now, ..Default::default() };
+    let held = opts.editing.as_deref().map(crate::hold::chunk_path);
     if let Some(k) = &opts.editing {
         if let Err(e) = claim(root, k, &opts.user, now) {
             report.error = Some(e.to_string());
         }
+        // El chunk en edición se retiene: no se sube hasta cerrarlo con "Listo".
+        if let Err(e) = crate::hold::start(root, held.as_deref().unwrap_or_default(), now) {
+            report.error = Some(e.to_string());
+        }
     }
+    // Los chunks que se cerraron se comparan con lo que llegó del servidor mientras
+    // estaban retenidos: si ambos cambiaron queda un único conflicto para resolver.
+    report.changed = crate::hold::close_all(root, held.as_deref());
     // Primero el commit de lo propio: así `changed` solo recoge lo que vino del servidor.
     if let Err(e) = gitrepo::commit_all(root, author, gitrepo::AUTOSAVE_MESSAGE) {
         report.error = Some(e.to_string());
@@ -200,7 +210,7 @@ pub fn sync(root: &Path, url: &str, creds: Option<&Credentials>, author: &Author
         }
     }
     let after = gitrepo::head_hash(root);
-    report.changed = gitrepo::changed_files(root, before.as_deref(), after.as_deref()).unwrap_or_default().into_iter().filter(|p| is_chunk(p)).collect();
+    report.changed.extend(gitrepo::changed_files(root, before.as_deref(), after.as_deref()).unwrap_or_default().into_iter().filter(|p| is_chunk(p)));
     report.conflicts = gitrepo::conflicted_files(root).unwrap_or_default();
 
     let can_push = opts.push
@@ -243,6 +253,11 @@ pub fn sync(root: &Path, url: &str, creds: Option<&Credentials>, author: &Author
                 }
             }
         }
+    }
+    // El chunk en edición nunca se recarga en pantalla: lo que llegó del servidor
+    // espera en HEAD hasta que se cierre.
+    if let Some(h) = &held {
+        report.changed.retain(|p| p != h);
     }
     report.changed.sort();
     report.changed.dedup();
@@ -296,6 +311,8 @@ mod tests {
         let r = sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", Some("01/01")));
         assert!(r.error.is_none() && !r.offline, "{r:?}");
         assert_eq!(r.push, Some(PushStatus::Ok));
+        // Ana cierra el chunk ("Listo"): ahí se comparte.
+        sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", None));
 
         b.write_chunk("01", "02", "\\v 4 Beto traduce").unwrap();
         let r = sync(&b.root, &url, Some(&creds()), &author("beto"), &opts("beto", Some("01/02")));
@@ -306,6 +323,7 @@ mod tests {
         // Beto ve la reserva de Ana y la suya.
         let users: Vec<_> = r.claims.iter().map(|c| (c.key.as_str(), c.user.as_str())).collect();
         assert_eq!(users, vec![("01/01", "ana"), ("01/02", "beto")]);
+        sync(&b.root, &url, Some(&creds()), &author("beto"), &opts("beto", None));
 
         let r = sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", None));
         assert_eq!(r.changed, vec!["01/02.txt"]);
@@ -341,6 +359,96 @@ mod tests {
         let r = sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", None));
         assert_eq!(a.read_chunk("01", "01").unwrap(), "\\v 1 versión de Beto");
         assert!(r.conflicts.is_empty());
+    }
+
+    #[test]
+    fn el_chunk_en_edicion_no_se_comparte_hasta_cerrarlo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (url, a, b) = team(tmp.path());
+        a.write_chunk("01", "01", "\\v 1 base").unwrap();
+        sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", None));
+        sync(&b.root, &url, Some(&creds()), &author("beto"), &opts("beto", None));
+
+        // Ana edita: varias pasadas con el texto a medias no suben nada de ese chunk.
+        a.write_chunk("01", "01", "\\v 1 Ana escri").unwrap();
+        let r = sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", Some("01/01")));
+        assert!(r.error.is_none(), "{r:?}");
+        a.write_chunk("01", "01", "\\v 1 Ana escribiendo").unwrap();
+        sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", Some("01/01")));
+        let r = sync(&b.root, &url, Some(&creds()), &author("beto"), &opts("beto", None));
+        assert!(r.changed.is_empty(), "{r:?}");
+        assert_eq!(b.read_chunk("01", "01").unwrap(), "\\v 1 base");
+        assert_eq!(r.claims.iter().map(|c| c.user.as_str()).collect::<Vec<_>>(), vec!["ana"]);
+
+        // Al cerrar ("Listo") se sube, y Beto lo recibe.
+        let r = sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", None));
+        assert_eq!(r.push, Some(PushStatus::Ok));
+        assert!(r.conflicts.is_empty());
+        let r = sync(&b.root, &url, Some(&creds()), &author("beto"), &opts("beto", None));
+        assert_eq!(r.changed, vec!["01/01.txt"]);
+        assert_eq!(b.read_chunk("01", "01").unwrap(), "\\v 1 Ana escribiendo");
+    }
+
+    #[test]
+    fn si_otro_cambio_el_chunk_mientras_se_editaba_hay_un_solo_conflicto_al_cerrar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (url, a, b) = team(tmp.path());
+        a.write_chunk("01", "01", "\\v 1 base").unwrap();
+        sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", None));
+        sync(&b.root, &url, Some(&creds()), &author("beto"), &opts("beto", None));
+
+        // Ana abre el chunk; Beto lo cambia y sube sin hacer caso a la reserva.
+        sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", Some("01/01")));
+        a.write_chunk("01", "01", "\\v 1 versión de Ana").unwrap();
+        b.write_chunk("01", "01", "\\v 1 versión de Beto").unwrap();
+        let r = sync(&b.root, &url, Some(&creds()), &author("beto"), &opts("beto", None));
+        assert_eq!(r.push, Some(PushStatus::Ok));
+
+        // Mientras Ana sigue escribiendo no se le interrumpe: ni recarga ni conflicto.
+        for _ in 0..2 {
+            let r = sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", Some("01/01")));
+            assert!(r.changed.is_empty() && r.conflicts.is_empty(), "{r:?}");
+            assert_eq!(a.read_chunk("01", "01").unwrap(), "\\v 1 versión de Ana");
+        }
+
+        // Al cerrar aparece el conflicto una sola vez, con las dos versiones, y no se sube.
+        let r = sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", None));
+        assert_eq!(r.conflicts, vec!["01/01.txt"]);
+        assert_eq!(r.changed, vec!["01/01.txt"]);
+        assert!(r.push.is_none(), "{r:?}");
+        let text = a.read_chunk("01", "01").unwrap();
+        let options: Vec<String> = crate::conflicts::parse(&text).iter().map(|o| o.trim().to_string()).collect();
+        assert_eq!(options, vec!["\\v 1 versión de Ana", "\\v 1 versión de Beto"]);
+        let r = sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", None));
+        assert!(r.changed.is_empty(), "el conflicto pendiente no se repite: {r:?}");
+
+        // Ana resuelve y se sube.
+        a.write_chunk("01", "01", "\\v 1 versión de Ana").unwrap();
+        let r = sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", None));
+        assert!(r.conflicts.is_empty());
+        assert_eq!(r.push, Some(PushStatus::Ok));
+        sync(&b.root, &url, Some(&creds()), &author("beto"), &opts("beto", None));
+        assert_eq!(b.read_chunk("01", "01").unwrap(), "\\v 1 versión de Ana");
+    }
+
+    #[test]
+    fn cerrar_sin_haber_escrito_adopta_lo_del_servidor() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (url, a, b) = team(tmp.path());
+        a.write_chunk("01", "01", "\\v 1 base").unwrap();
+        sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", None));
+        sync(&b.root, &url, Some(&creds()), &author("beto"), &opts("beto", None));
+
+        sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", Some("01/01")));
+        b.write_chunk("01", "01", "\\v 1 versión de Beto").unwrap();
+        sync(&b.root, &url, Some(&creds()), &author("beto"), &opts("beto", None));
+        sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", Some("01/01")));
+        assert_eq!(a.read_chunk("01", "01").unwrap(), "\\v 1 base");
+
+        let r = sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", None));
+        assert!(r.conflicts.is_empty(), "{r:?}");
+        assert_eq!(r.changed, vec!["01/01.txt"]);
+        assert_eq!(a.read_chunk("01", "01").unwrap(), "\\v 1 versión de Beto");
     }
 
     #[test]

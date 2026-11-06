@@ -171,8 +171,14 @@ pub(crate) fn commit_all_unlocked(path: &Path, author: &Author, message: &str) -
     unlock_stale(path);
     let repo = open_or_init(path)?;
     let mut index = repo.index()?;
-    index.add_all(["*"].iter(), IndexAddOption::DEFAULT, None)?;
-    index.update_all(["*"].iter(), None)?;
+    // Los chunks retenidos (alguien del equipo los está editando) no entran en el commit.
+    let held = crate::hold::paths(path);
+    let mut skip_held = |p: &Path, _: &[u8]| -> i32 {
+        let rel = p.to_string_lossy().replace('\\', "/");
+        if held.iter().any(|h| *h == rel) { 1 } else { 0 }
+    };
+    index.add_all(["*"].iter(), IndexAddOption::DEFAULT, Some(&mut skip_held))?;
+    index.update_all(["*"].iter(), Some(&mut skip_held))?;
     index.write()?;
     let tree_id = index.write_tree()?;
     let head = head_commit(&repo);
@@ -386,7 +392,36 @@ pub fn pull(path: &Path, url: &str, creds: Option<&Credentials>, author: &Author
     create_backup_branch(path)?;
     let repo = open_or_init(path)?;
     set_remote(&repo, "origin", url)?;
-    fetch_and_merge(&repo, "origin", creds, author)
+    // Los chunks retenidos (en edición) se conservan tal cual: el checkout de la
+    // fusión no debe pisar lo que se está escribiendo. Lo que llegó del servidor
+    // queda en HEAD y se compara al cerrar el chunk (`hold::close`).
+    let kept: Vec<(String, String)> = crate::hold::paths(path)
+        .into_iter()
+        .filter_map(|p| std::fs::read_to_string(path.join(&p)).ok().map(|t| (p, t)))
+        .collect();
+    let result = fetch_and_merge(&repo, "origin", creds, author);
+    for (p, text) in kept {
+        let full = path.join(&p);
+        if std::fs::read_to_string(&full).ok().as_deref() != Some(text.as_str()) {
+            crate::project::atomic_write(&full, &text)?;
+        }
+    }
+    result
+}
+
+/// Id del blob de `file` en HEAD (`None` si no existe ahí).
+pub fn head_blob_id(path: &Path, file: &str) -> Option<String> {
+    let repo = Repository::open(path).ok()?;
+    let head = head_commit(&repo)?;
+    let entry = head.tree().ok()?.get_path(Path::new(file)).ok()?;
+    Some(entry.id().to_string())
+}
+
+/// Contenido de un blob por su id.
+pub fn blob_by_id(path: &Path, id: &str) -> Option<String> {
+    let repo = Repository::open(path).ok()?;
+    let blob = repo.find_blob(Oid::from_str(id).ok()?).ok()?;
+    Some(String::from_utf8_lossy(blob.content()).into_owned())
 }
 
 /// Fusiona otro proyecto local (p. ej. uno importado) en este.

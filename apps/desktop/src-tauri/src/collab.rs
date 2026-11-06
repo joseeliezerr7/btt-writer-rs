@@ -66,6 +66,11 @@ pub struct CollabStatus {
 
 fn status(st: &AppState, id: &str) -> R<CollabStatus> {
     let p = open_project(st, id)?;
+    if active_remote(st, id).is_none() {
+        // Sin equipo no hay chunks retenidos: si quedó alguno (equipo desactivado a
+        // medias), se cierra para que vuelva a entrar en los commits.
+        btt_core::hold::close_all(&p.root, None);
+    }
     let me = st.profile.lock().unwrap_or_else(|e| e.into_inner()).session.as_ref().map(|s| s.user.username.clone()).unwrap_or_default();
     let syncing = st.collab_running.lock().unwrap_or_else(|e| e.into_inner()).contains(id);
     Ok(CollabStatus {
@@ -130,8 +135,11 @@ pub async fn collab_disable(app: tauri::AppHandle, id: String) -> R<CollabStatus
         if let Some(cfg) = active_remote(st, &id) {
             let me = credentials(st).map(|(_, u)| u).unwrap_or_default();
             let _ = collab::release_all(&p.root, &me, now());
+            // La pasada sin chunk en edición cierra las retenciones (y sube lo cerrado).
             let _ = run_sync(st, &id, &p.root, &cfg, None, true);
         }
+        btt_core::hold::close_all(&p.root, None);
+        let _ = btt_core::hold::clear(&p.root);
         let mut cfg = config(st, &id).unwrap_or_default();
         cfg.enabled = false;
         set_config(st, &id, cfg)?;
@@ -295,13 +303,17 @@ pub async fn collab_release(app: tauri::AppHandle, id: String, key: String) -> R
     .await
 }
 
-/// Reserva un chunk antes de editarlo. `false` si otra persona lo tiene reservado.
+/// Reserva un chunk antes de editarlo y lo retiene: no se sube hasta cerrarlo.
+/// `false` si otra persona lo tiene reservado (se retiene igual: el usuario decide).
 #[tauri::command]
 pub async fn collab_claim(app: tauri::AppHandle, id: String, key: String) -> R<bool> {
     blocking(app, move |st| {
         let p = open_project(st, &id)?;
         let (_, user) = credentials(st)?;
-        collab::claim(&p.root, &key, &user, now()).map_err(err)
+        let t = now();
+        let free = collab::claim(&p.root, &key, &user, t).map_err(err)?;
+        btt_core::hold::start(&p.root, &btt_core::hold::chunk_path(&key), t).map_err(err)?;
+        Ok(free)
     })
     .await
 }

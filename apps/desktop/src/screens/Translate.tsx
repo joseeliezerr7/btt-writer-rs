@@ -79,11 +79,18 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
     load();
   }, [load, refresh]);
 
+  // Conflictos ya avisados: un conflicto pendiente se informa en cada pasada, pero
+  // solo se avisa (y se recarga la tarjeta) la primera vez.
+  const knownConflicts = useRef<string[]>([]);
   const collab = useCollab(id, (changed, conflicts) => {
-    setRemote((r) => ({ tick: r.tick + 1, changed }));
+    const fresh = conflicts.filter((c) => !knownConflicts.current.includes(c));
+    knownConflicts.current = conflicts;
+    const touched = Array.from(new Set([...changed, ...fresh]));
+    if (!touched.length) return;
+    setRemote((r) => ({ tick: r.tick + 1, changed: touched }));
     load();
-    if (conflicts.length) fb.toast(t("collab.remote_conflicts", { n: conflicts.length }), "error");
-    else if (changed.length) fb.toast(t("collab.remote_changes", { n: changed.length }), "success");
+    if (fresh.length) fb.toast(t("collab.remote_conflicts", { n: fresh.length }), "error");
+    else fb.toast(t("collab.remote_changes", { n: changed.length }), "success");
   });
 
   // Autoguardado git cada 2 minutos y al salir.
@@ -552,13 +559,13 @@ function ChunkCard(props: {
   };
   // Al desmontar la tarjeta (cambio de capítulo, de modo o de proyecto) se guarda lo pendiente en vez de perderlo,
   // y se deja en el historial. El id, capítulo y chunk van fijados en la llamada: nunca se escribe sobre otro proyecto.
+  // Si se estaba editando en equipo, el chunk se cierra (se comparte) después de guardarlo.
   useEffect(() => () => {
     if (timer.current) clearTimeout(timer.current);
     const value = pending.current;
-    if (value !== null) {
-      pending.current = null;
-      writeNow(value).then(() => api.commitProject(id)).catch((e) => console.warn("guardado al salir:", e));
-    }
+    pending.current = null;
+    const saved = value !== null ? writeNow(value).then(() => api.commitProject(id)).catch((e) => console.warn("guardado al salir:", e)) : Promise.resolve();
+    if (editingRef.current) saved.then(() => endCollabRef.current());
   }, []);
 
   const toggleDone = async (finished: boolean) => {
@@ -573,8 +580,10 @@ function ChunkCard(props: {
         fb.toast(`${t("translate.issues")} ${issues.map((i) => issueText(t, i)).join(" ")}`, "error");
         return;
       }
-      setEditing(false);
-      endCollab();
+      if (editing) {
+        setEditing(false);
+        endCollab();
+      }
       await reload();
       props.onChanged();
     } catch (e) {
@@ -602,7 +611,9 @@ function ChunkCard(props: {
   const endCollab = () => {
     if (props.collab.enabled) void props.collab.stopEditing(collabKey);
   };
-  useEffect(() => () => { if (editingRef.current) endCollab(); }, []);
+  // La limpieza al desmontar se declara arriba, con el primer render: por eso usa la versión actual.
+  const endCollabRef = useRef(endCollab);
+  endCollabRef.current = endCollab;
   useEffect(() => {
     if (props.remote.changed.includes(`${collabKey}.txt`)) {
       // Lo que llegó del servidor manda: se descarta lo no guardado de los últimos instantes.
@@ -612,14 +623,14 @@ function ChunkCard(props: {
     }
   }, [props.remote.tick]);
 
-  /** "Listo": guarda lo pendiente, libera la reserva y recarga el estado (avisos, versículos). */
+  /** "Listo": guarda lo pendiente, cierra el chunk en el equipo (ahí se comparte) y recarga el estado (avisos, versículos). */
   const finishEditing = async () => {
     setEditing(false);
-    endCollab();
     if (timer.current) clearTimeout(timer.current);
     const v = pending.current;
     pending.current = null;
     if (v !== null) await writeNow(v).catch(fb.error);
+    endCollab();
     await reload();
     props.onChanged();
   };
