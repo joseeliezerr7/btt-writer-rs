@@ -10,6 +10,9 @@ assert.deepEqual(segment("\\v 1 Hola \\v 2 mundo"), [
 ]);
 // `\v 10` no es `\v 1`; un sufijo de letra forma parte de la etiqueta.
 assert.deepEqual(segment("\\v 10 x \\v 2a y").map((s) => (s.kind === "marker" ? s.n : s.raw)), ["10", "x ", "2a", "y"]);
+// En el editor solo se vuelven ficha los marcadores cerrados con espacio: `\v 1` a medio escribir sigue siendo texto.
+assert.deepEqual(segment("\\v 13 Hola \\v 1", true).map((s) => (s.kind === "marker" ? s.n : s.raw)), ["13", "Hola \\v 1"]);
+assert.deepEqual(segment("\\v 13 Hola \\v 14 ", true).map((s) => (s.kind === "marker" ? s.n : s.raw)), ["13", "Hola ", "14"]);
 assert.deepEqual(findVerse("a \\v 2 b", "2"), { start: 2, end: 7 });
 assert.equal(findVerse("a \\v 2 b", "3"), null);
 

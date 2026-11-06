@@ -33,7 +33,7 @@ function isMarker(node: Node | null): node is HTMLElement {
 /** Construye el contenido del editor a partir del texto. */
 function build(root: HTMLElement, text: string, picked: string | null) {
   root.textContent = "";
-  for (const g of segment(text)) {
+  for (const g of segment(text, true)) {
     if (g.kind === "text") {
       root.appendChild(document.createTextNode(g.raw));
     } else {
@@ -189,7 +189,8 @@ export const VerseEditor = forwardRef<VerseEditorHandle, Props>(function VerseEd
     if (composing.current) { onChange(raw); return; }
     const fixed = normalizeVerseMarkers(raw, caret ?? raw.length);
     // Un `\v 3` escrito a mano pasa a ser ficha; los espacios añadidos se reflejan en el DOM.
-    const typedMarker = Array.from(el.childNodes).some((n) => n.nodeType === Node.TEXT_NODE && /\\v\s*\d/.test(n.nodeValue ?? ""));
+    // Solo cuando el número ya va seguido de espacio: `\v 13 ` y no `\v 1` a medio escribir.
+    const typedMarker = Array.from(el.childNodes).some((n) => n.nodeType === Node.TEXT_NODE && /\\v\s*\d+[a-z]?(?:-\d+[a-z]?)?\s/.test(n.nodeValue ?? ""));
     if (typedMarker || fixed.text !== raw) rebuild(fixed.text, fixed.caret);
     onChange(fixed.text);
   };

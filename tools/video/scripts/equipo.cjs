@@ -9,7 +9,7 @@ module.exports = {
     key: 'equipo',
     title: 'Trabajo en equipo en BTT Writer',
     summary: 'Varias personas traducen el mismo libro a la vez, cada una desde su dispositivo, con sincronización automática y sin perder trabajo.',
-    start: '/',
+    start: '/?sin-conflictos',
     // Alta con cuenta del servidor (fuera del video).
     async setup(h) {
         await h.page.locator('text=Continuar').first().click();
@@ -125,10 +125,11 @@ module.exports = {
             },
         },
         {
-            say: 'Y si dos personas editaran el mismo chunk, la aplicación mostraría las dos versiones para que el equipo elija cuál conservar, como ya hace con los conflictos. Ese dispositivo no sube nada hasta resolverlo, y siempre queda la copia de respaldo anterior.',
+            say: 'Y si alguna vez dos personas editan el mismo chunk, no se pierde nada: la aplicación muestra las dos versiones para que el equipo elija cuál conservar. Ese dispositivo no sube nada hasta resolverlo, y siempre queda la copia de respaldo anterior.',
             do: async (h) => {
-                await h.scrollTo('.chunk-card:has(.pane.target.conflict)');
-                await h.highlight('.chunk-card:has(.pane.target.conflict) .pane.target', 5000);
+                await h.banner('Mismo chunk editado por dos personas: se eligen entre las dos versiones, con copia de respaldo');
+                await h.sleep(9000);
+                await h.banner('');
             },
         },
         {

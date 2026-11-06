@@ -135,11 +135,14 @@ export function insertMarkerAt(text: string, n: number | string, pos: number): {
 export type Segment = { kind: "text"; raw: string } | { kind: "marker"; n: string; raw: string };
 
 const MARKER_RE = /\\v\s+(\d+(?:-\d+)?[a-z]?)(?![\w-]) ?/g;
+// Solo marcadores "cerrados" (número seguido de espacio): mientras se escribe
+// `\v 13`, la ficha no se forma al teclear el `1`.
+const COMPLETE_MARKER_RE = /\\v\s+(\d+(?:-\d+)?[a-z]?)(?=\s) ?/g;
 
-export function segment(text: string): Segment[] {
+export function segment(text: string, completeOnly = false): Segment[] {
   const out: Segment[] = [];
   let i = 0;
-  for (const m of text.matchAll(MARKER_RE)) {
+  for (const m of text.matchAll(completeOnly ? COMPLETE_MARKER_RE : MARKER_RE)) {
     const at = m.index ?? 0;
     if (at > i) out.push({ kind: "text", raw: text.slice(i, at) });
     out.push({ kind: "marker", n: m[1], raw: m[0] });

@@ -70,6 +70,10 @@ const projects: MockProject[] = [
   { id: "miq_jon_text_reg", language: languages[2], project: "jon", type: "text", resource: "reg", chunks: {}, finished: [], translators: ["Ana"], sources: [{ language_id: "en", resource_id: "ulb" }], title: "" },
   { id: "es-419_3jn_tn", language: languages[0], project: "3jn", type: "tn", resource: "", chunks: {}, finished: [], translators: ["Ana"], sources: [{ language_id: "en", resource_id: "ulb" }], title: "" },
 ];
+// `?sin-conflictos`: proyecto de demostración limpio (para los videos de presentación).
+if (typeof location !== "undefined" && new URLSearchParams(location.search).has("sin-conflictos")) {
+  projects[0].chunks["01/09"] = "\\v 9 Yo escribí algo a la iglesia, pero Diótrefes no nos recibe.\n\\v 10 Por esta causa, si voy, recordaré las obras que hace.";
+}
 let settings = {
   color_theme: "system", ui_language: "es", gateway_language_mode: true, translation_font: "Noto Sans", translation_font_size: 25, source_font: "Noto Sans", source_font_size: 25,
   content_server: "wacs", git_api_url: "https://content.bibletranslationtools.org/api/v1", data_server_url: "https://content.bibletranslationtools.org", media_server_url: "https://api.bibletranslationtools.org",

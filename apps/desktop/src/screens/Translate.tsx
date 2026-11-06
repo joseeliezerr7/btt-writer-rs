@@ -612,6 +612,18 @@ function ChunkCard(props: {
     }
   }, [props.remote.tick]);
 
+  /** "Listo": guarda lo pendiente, libera la reserva y recarga el estado (avisos, versículos). */
+  const finishEditing = async () => {
+    setEditing(false);
+    endCollab();
+    if (timer.current) clearTimeout(timer.current);
+    const v = pending.current;
+    pending.current = null;
+    if (v !== null) await writeNow(v).catch(fb.error);
+    await reload();
+    props.onChanged();
+  };
+
   const startEdit = async () => {
     if (data?.finished) {
       const ok = await fb.confirm(t("translate.done"), t("translate.reopen"));
@@ -746,7 +758,7 @@ function ChunkCard(props: {
           {data && !isTitle && !data.has_conflict && (
             props.review ? (
               <>
-                {!data.finished && <Button size="sm" variant={editing ? "primary" : "ghost"} icon={!editing} title={t("translate.chunk")} onClick={() => { if (editing) { setEditing(false); endCollab(); } else startEdit(); }}>{editing ? t("common.done") : <Pencil size={14} />}</Button>}
+                {!data.finished && <Button size="sm" variant={editing ? "primary" : "ghost"} icon={!editing} title={t("translate.chunk")} onClick={() => (editing ? finishEditing() : startEdit())}>{editing ? t("common.done") : <Pencil size={14} />}</Button>}
                 {editing && !isHelps && !arrange && <Button size="sm" variant="ghost" title={t("translate.add_footnote")} onClick={insertFootnote}>ƒ</Button>}
                 {editing && arrangeBtn}
                 <Button size="sm" variant="ghost" icon title={t("translate.history")} onClick={openHistory}><History size={14} /></Button>
@@ -864,7 +876,7 @@ function ChunkCard(props: {
             {!text && <span className="muted">{placeholder}</span>}
           </div>
         )}
-        {data && data.issues.length > 0 && props.review && !isTitle && text && (
+        {data && data.issues.length > 0 && props.review && !isTitle && text && !editing && (
           <div className="issue-text"><AlertTriangle size={14} style={{ marginTop: 2, flex: "none" }} /><span>{data.issues.map((i) => issueText(t, i)).join(" ")}</span></div>
         )}
       </div>
