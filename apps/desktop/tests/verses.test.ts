@@ -36,3 +36,18 @@ assert.equal(moveMarker(fn, 0, 4), "a \\v 1 \\f + \\ft nota con espacios\\f* b\n
 // Soltar en el hueco justo antes del propio marcador no cambia nada.
 assert.equal(moveMarker(txt, idx2, idx2), txt);
 console.log("verses.test.ts ok");
+
+// Insertar en una posición del texto (arrastre sobre el editor)
+{
+  const { snapToWordBoundary, insertMarkerAt } = await import("../src/components/verse-markers.ts");
+  assert.equal(snapToWordBoundary("hola mundo", 2), 0);
+  assert.equal(snapToWordBoundary("hola mundo", 3), 4);
+  assert.equal(snapToWordBoundary("hola mundo", 4), 4);
+  assert.equal(snapToWordBoundary("hola mundo", 10), 10);
+  assert.deepEqual(insertMarkerAt("hola mundo", 2, 5), { text: "hola \\v 2 mundo", caret: 10 });
+  assert.deepEqual(insertMarkerAt("hola mundo", 2, 7), { text: "hola \\v 2 mundo", caret: 10 });
+  assert.deepEqual(insertMarkerAt("hola", 1, 0), { text: "\\v 1 hola", caret: 5 });
+  assert.deepEqual(insertMarkerAt("hola", 2, 4), { text: "hola \\v 2 ", caret: 10 });
+  assert.deepEqual(insertMarkerAt("", 1, 0), { text: "\\v 1 ", caret: 5 });
+}
+console.log("insertMarkerAt ok");

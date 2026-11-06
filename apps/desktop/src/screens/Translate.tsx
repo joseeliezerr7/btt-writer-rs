@@ -18,7 +18,29 @@ import { useApp } from "../app-context";
 import { formatDate, useT } from "../i18n";
 import { Button, Dialog, IconBadge, Logo, SimpleMarkdown, Spinner, Switch, Tabs, useFeedback } from "../components/ui";
 import { bookName, DownloadLanguageButton, ExportDialog, issueText, PrintDialog, SourceSelectionDialog } from "../components/dialogs";
-import { MARKER_MIME, normalizeVerseMarkers, removeMarker, VerseArranger } from "../components/verses";
+import { insertMarkerAt, MARKER_MIME, normalizeVerseMarkers, removeMarker, VerseArranger } from "../components/verses";
+
+/** Lista numerada de la verificación previa a marcar un chunk como terminado. */
+function Checklist({ t }: { t: (k: string) => string }) {
+  return (
+    <>
+      <p style={{ margin: "0 0 .5rem" }}>{t("translate.checklist_intro")}</p>
+      <ol className="checklist">
+        {t("translate.checklist_items").split("\n").map((item, i) => <li key={i}>{item}</li>)}
+      </ol>
+    </>
+  );
+}
+
+/** Posición del texto bajo el puntero dentro de un `<textarea>` (null si el navegador no la sabe). */
+function caretIndexAt(el: HTMLTextAreaElement, x: number, y: number): number | null {
+  const doc = document as Document & { caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null };
+  const p = doc.caretPositionFromPoint?.(x, y);
+  if (p && (p.offsetNode === el || el.contains(p.offsetNode))) return p.offset;
+  const r = doc.caretRangeFromPoint?.(x, y);
+  if (r && (r.startContainer === el || el.contains(r.startContainer))) return r.startOffset;
+  return null;
+}
 
 type Mode = "read" | "chunk" | "review";
 
@@ -214,7 +236,7 @@ function MarkAllButton({ id, onDone }: { id: string; onDone: () => void }) {
   const fb = useFeedback();
   const [busy, setBusy] = useState(false);
   const run = async () => {
-    const ok = await fb.confirm(t("translate.mark_all"), t("translate.checklist_body"));
+    const ok = await fb.confirm(t("translate.mark_all"), <Checklist t={t} />);
     if (!ok) return;
     setBusy(true);
     try {
@@ -516,7 +538,7 @@ function ChunkCard(props: {
   const toggleDone = async (finished: boolean) => {
     if (finished) {
       if (timer.current) { clearTimeout(timer.current); pending.current = null; await writeNow(text).catch(fb.error); }
-      const ok = await fb.confirm(t("translate.checklist_title"), t("translate.checklist_body"), { okLabel: t("common.confirm") });
+      const ok = await fb.confirm(t("translate.checklist_title"), <Checklist t={t} />, { okLabel: t("common.confirm") });
       if (!ok) return;
     }
     try {
@@ -582,17 +604,14 @@ function ChunkCard(props: {
     for (let n = a; n <= b; n++) versesInText.add(n);
   }
 
-  /** Inserta `\v N` en el cursor (o al final) con los espacios necesarios. */
-  const insertVerse = (n: number) => {
+  /** Inserta `\v N` en el cursor (o en la posición dada, o al final) con los espacios necesarios. */
+  const insertVerse = (n: number, at?: number) => {
     if (versesInText.has(n)) return;
     const el = textRef.current;
-    const pos = el?.selectionStart ?? text.length;
-    const before = text.slice(0, pos);
-    const after = text.slice(pos);
-    const lead = before.length && !/\s$/.test(before) ? " " : "";
-    const snippet = `${lead}\\v ${n} `;
-    save(before + snippet + after.replace(/^\s+/, ""));
-    const caret = before.length + snippet.length;
+    const pos = at ?? el?.selectionStart ?? text.length;
+    const r = insertMarkerAt(text, n, pos);
+    save(r.text);
+    const caret = r.caret;
     setTimeout(() => {
       if (el) {
         el.focus();
@@ -768,7 +787,17 @@ function ChunkCard(props: {
                 placeholder={placeholder}
                 onChange={onEditorChange}
                 onFocus={() => { if (!props.review) setEditing(true); }}
-                onDragOver={(e) => { if (e.dataTransfer.types.includes("text/plain")) e.dataTransfer.dropEffect = "copy"; }}
+                onDragOver={(e) => { if (e.dataTransfer.types.includes("text/plain")) { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; } }}
+                // Una ficha de versículo soltada sobre el texto se coloca en la palabra bajo el puntero
+                // (si el navegador no sabe la posición, lo inserta él mismo donde cayó).
+                onDrop={(e) => {
+                  const m = /^\\v\s+(\d+)\s*$/.exec(e.dataTransfer.getData("text/plain"));
+                  if (!m) return;
+                  const pos = caretIndexAt(e.currentTarget, e.clientX, e.clientY);
+                  if (pos === null) return;
+                  e.preventDefault();
+                  insertVerse(Number(m[1]), pos);
+                }}
                 spellCheck={false}
               />
             )}

@@ -540,6 +540,8 @@ mark { background: #ffe58a; color: inherit; border-radius: 2px; }
 .select-box.on { color: var(--primary); }
 .delete-list { margin: 0; padding-left: 1.2rem; max-height: 220px; overflow: auto; }
 .delete-list li { margin: .15rem 0; }
+.checklist { margin: 0; padding-left: 1.3rem; }
+.checklist li { margin: .25rem 0; }
 .user-chip { cursor: pointer; color: var(--text); font-family: inherit; transition: background .12s, border-color .12s; }
 .user-chip:hover, .user-chip.open { background: var(--surface-3); border-color: var(--border-strong); }
 .user-chip .user-state { color: var(--muted); }

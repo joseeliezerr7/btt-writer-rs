@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type DragEvent, type ReactNode } from "rea
 import { useT } from "../i18n";
 import { insertMarker, MARKER_MIME, moveMarker, removeMarker, tokenize } from "./verse-markers";
 
-export { MARKER_MIME, normalizeVerseMarkers, removeMarker } from "./verse-markers";
+export { insertMarkerAt, MARKER_MIME, normalizeVerseMarkers, removeMarker } from "./verse-markers";
 
 /**
  * Vista del texto con los versículos como fichas que se pueden arrastrar entre las

@@ -216,8 +216,9 @@ const es: Record<string, string> = {
   "translate.done": "Terminado",
   "translate.reopen": "Este chunk está terminado. ¿Quieres seguir editándolo?",
   "translate.checklist_title": "Lista de verificación del chunk",
-  "translate.checklist_body":
-    "Antes de marcar este chunk como terminado confirma que: tradujiste todos los versos de la fuente; el significado es fiel y natural en tu idioma; revisaste los términos clave (Palabras) y las Notas; los marcadores de versos están en su lugar.",
+  "translate.checklist_intro": "Antes de marcar este chunk como terminado confirma que:",
+  "translate.checklist_items":
+    "Tradujiste todos los versos de la fuente.\nEl significado es fiel y natural en tu idioma.\nRevisaste los términos clave (Palabras) y las Notas.\nLos marcadores de versos están en su lugar.",
   "translate.issues": "No se puede marcar como terminado:",
   "issue.empty": "El chunk está vacío.",
   "issue.consecutive_markers": "El verso {verse} no tiene texto.",
@@ -659,7 +660,8 @@ const en: Record<string, string> = {
   "translate.done": "Done",
   "translate.reopen": "This chunk is done. Continue editing?",
   "translate.checklist_title": "Chunk Checklist",
-  "translate.checklist_body": "Before marking this chunk done confirm that: all verses of the source are translated; the meaning is faithful and natural; you checked key terms (Words) and Notes; verse markers are in place.",
+  "translate.checklist_intro": "Before marking this chunk done confirm that:",
+  "translate.checklist_items": "All verses of the source are translated.\nThe meaning is faithful and natural in your language.\nYou checked key terms (Words) and Notes.\nVerse markers are in place.",
   "translate.issues": "Cannot mark as done:",
   "issue.empty": "The chunk is empty.",
   "issue.consecutive_markers": "Verse {verse} has no text.",

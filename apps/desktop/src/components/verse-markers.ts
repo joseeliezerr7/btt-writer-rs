@@ -1,4 +1,4 @@
-// Funciones puras sobre marcadores de versículo ` N` (sin React): normalización
+// Funciones puras sobre marcadores de versículo `\v N` (sin React): normalización
 // de lo pegado al marcador y mover/insertar/quitar marcadores entre palabras.
 
 /**
@@ -103,3 +103,30 @@ export function removeMarker(text: string, from: number): string {
 }
 
 export const MARKER_MIME = "application/x-btt-verse-marker";
+
+/**
+ * Acerca una posición del texto al borde de palabra más próximo, para que un
+ * marcador soltado en mitad de una palabra no la parta.
+ */
+export function snapToWordBoundary(text: string, pos: number): number {
+  pos = Math.max(0, Math.min(pos, text.length));
+  if (pos === 0 || pos === text.length || /\s/.test(text[pos - 1]) || /\s/.test(text[pos])) return pos;
+  let start = pos;
+  while (start > 0 && !/\s/.test(text[start - 1])) start--;
+  let end = pos;
+  while (end < text.length && !/\s/.test(text[end])) end++;
+  return pos - start <= end - pos ? start : end;
+}
+
+/**
+ * Inserta `\\v N` en la posición dada (ajustada al borde de palabra) con los
+ * espacios necesarios. Devuelve el texto y la posición del cursor tras el marcador.
+ */
+export function insertMarkerAt(text: string, n: number, pos: number): { text: string; caret: number } {
+  const at = snapToWordBoundary(text, pos);
+  const before = text.slice(0, at);
+  const after = text.slice(at).replace(/^[ \t]+/, "");
+  const lead = before.length && !/\s$/.test(before) ? " " : "";
+  const snippet = `${lead}\\v ${n} `;
+  return { text: before + snippet + after, caret: before.length + snippet.length };
+}
