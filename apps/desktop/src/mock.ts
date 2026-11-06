@@ -97,6 +97,16 @@ const summary = (p: MockProject) => {
     has_conflicts: Object.values(p.chunks).some((c) => c.includes("<<<<<<< ")), last_backup: null,
   };
 };
+// Estado simulado del trabajo en equipo.
+const collab: Record<string, { enabled: boolean; clone_url: string; html_url: string; owner: string; repo: string; last_sync: number; last_error: string }> = {};
+const members: string[] = ["ana"];
+let syncCount = 0;
+const claims = (editing: string | null = null) => {
+  const now = Math.floor(Date.now() / 1000);
+  const out = [{ key: "01/01", user: "ana", since: now - 240, until: now + 600 }];
+  if (editing && profile.session) out.push({ key: editing, user: profile.session.user.username, since: now - 10, until: now + 900 });
+  return out;
+};
 const find = (id: string) => {
   const p = projects.find((x) => x.id === id);
   if (!p) throw new Error("Proyecto no encontrado: " + id);
@@ -201,6 +211,20 @@ export async function mockInvoke<T>(cmd: string, a: Record<string, unknown> = {}
     }
     case "upload_project": return new Promise((res) => setTimeout(() => res({ push: { status: "ok" }, merge: { status: "up_to_date" }, url: "https://read.bibleineverylanguage.org/demo/" + s("id"), repo_url: "https://content.bibletranslationtools.org/demo/" + s("id") } as T), 900));
     case "pull_project": return delay({ status: "up_to_date" }) as T;
+    // Equipo (simulado): Ana tiene reservado 1:1-4 y a veces cambia 1:11-12.
+    case "collab_status": return delay({ config: collab[s("id")] ?? null, claims: claims(), conflicts: [], me: profile.session?.user.username ?? "", syncing: false }) as T;
+    case "collab_projects": return delay(Object.keys(collab).filter((k) => collab[k].enabled)) as T;
+    case "collab_enable": collab[s("id")] = { enabled: true, clone_url: `https://content.bibletranslationtools.org/${profile.session?.user.username ?? "demo"}/${s("id")}.git`, html_url: `https://content.bibletranslationtools.org/${profile.session?.user.username ?? "demo"}/${s("id")}`, owner: profile.session?.user.username ?? "demo", repo: s("id"), last_sync: Math.floor(Date.now() / 1000), last_error: "" }; members.push(...((a.members as string[]) ?? []).filter((m) => m && !members.includes(m))); return new Promise((res) => setTimeout(() => res({ config: collab[s("id")], claims: claims(), conflicts: [], me: profile.session?.user.username ?? "", syncing: false } as T), 900));
+    case "collab_disable": if (collab[s("id")]) collab[s("id")].enabled = false; return delay({ config: collab[s("id")] ?? null, claims: [], conflicts: [], me: profile.session?.user.username ?? "", syncing: false }) as T;
+    case "collab_members": return delay({ owner: collab[s("id")]?.owner ?? "demo", collaborators: members.map((m, i) => ({ id: i + 1, username: m, full_name: "", email: "", avatar_url: "" })), can_manage: true }) as T;
+    case "collab_add_member": if (!members.includes(s("username"))) members.push(s("username")); return mockInvoke("collab_members", a);
+    case "collab_remove_member": members.splice(members.indexOf(s("username")), 1); return mockInvoke("collab_members", a);
+    case "collab_shared_repos": return delay([{ id: 1, name: "miq_jon_text_reg", full_name: "ana/miq_jon_text_reg", html_url: "https://content.bibletranslationtools.org/ana/miq_jon_text_reg", clone_url: "https://content.bibletranslationtools.org/ana/miq_jon_text_reg.git", ssh_url: "", private: false, empty: false, description: "btt-writer", owner: { id: 9, username: "ana", full_name: "Ana", email: "", avatar_url: "" }, updated_at: "2026-11-05T10:00:00Z" }, { id: 2, name: "cbt_3jn_text_reg", full_name: "ana/cbt_3jn_text_reg", html_url: "", clone_url: "https://content.bibletranslationtools.org/ana/cbt_3jn_text_reg.git", ssh_url: "", private: false, empty: false, description: "", owner: { id: 9, username: "ana", full_name: "Ana", email: "", avatar_url: "" }, updated_at: "2026-11-04T10:00:00Z" }]) as T;
+    case "collab_join": { const id = s("cloneUrl").split("/").pop()!.replace(/\.git$/, ""); const exists = projects.some((p) => p.id === id); if (!exists) projects.push({ ...projects[0], id, chunks: {}, finished: [], title: "" }); collab[id] = { enabled: true, clone_url: s("cloneUrl"), html_url: s("cloneUrl").replace(/\.git$/, ""), owner: "ana", repo: id, last_sync: 0, last_error: "" }; return new Promise((res) => setTimeout(() => res({ id, status: { status: exists ? (a.mode === "merge" ? "merged" : "overwritten") : "imported" } } as T), 1000)); }
+    case "collab_sync": { const cfg = collab[s("id")]; if (!cfg) throw new Error("El proyecto no está en equipo"); syncCount++; const changed: string[] = []; const proj = find(s("id")); if (syncCount % 3 === 0 && proj.type === "text") { const p = proj; p.chunks["01/11"] = "\\v 11 Amado, no imites lo malo (cambio de Ana). \\v 12 Demetrio tiene buen testimonio."; changed.push("01/11.txt"); } cfg.last_sync = Math.floor(Date.now() / 1000); return new Promise((res) => setTimeout(() => res({ merge: { status: changed.length ? "merged" : "up_to_date" }, push: { status: a.push ? "ok" : "up_to_date" }, changed, conflicts: [], claims: claims(a.editing as string | null), offline: false, error: null, at: cfg.last_sync } as T), 700)); }
+    case "collab_release": return delay(undefined) as T;
+    case "collab_claim": return delay(s("key") !== "01/01") as T;
+    case "search_users": return delay([{ id: 9, username: "ana", full_name: "Ana Pérez", email: "", avatar_url: "" }, { id: 10, username: "beto", full_name: "Beto López", email: "", avatar_url: "" }].filter((u) => u.username.includes(s("query").toLowerCase()))) as T;
     case "restore_backup_branch": return delay(undefined) as T;
     case "search_wacs": return delay([{ id: 1, name: "cbt_3jn_text_reg", full_name: `${s("username") || "demo"}/cbt_3jn_text_reg`, html_url: "", clone_url: "https://x/cbt_3jn_text_reg.git", ssh_url: "", private: false, empty: false, description: "", owner: { id: 1, username: s("username") || "demo", full_name: "", email: "", avatar_url: "" }, updated_at: "" }, { id: 2, name: "cbt_gen_tw_x_y", full_name: "demo/cbt_gen_tw_x_y", html_url: "", clone_url: "", ssh_url: "", private: true, empty: false, description: "", owner: { id: 1, username: "demo", full_name: "", email: "", avatar_url: "" }, updated_at: "" }]) as T;
     case "import_from_wacs": return delay({ id: "cbt_3jn_text_reg", status: { status: "exists" } }) as T;

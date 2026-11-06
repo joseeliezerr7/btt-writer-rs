@@ -192,6 +192,43 @@ impl WacsClient {
         Ok(r.data)
     }
 
+    /// Repositorios a los que el usuario tiene acceso, incluidos los que otros le compartieron.
+    pub fn my_repos(&self, token: &str) -> Result<Vec<Repo>> {
+        let mut out = vec![];
+        for page in 1..=5 {
+            let r: Vec<Repo> = self.send(self.with_token(
+                self.client.get(self.url("user/repos")).query(&[("limit", "50"), ("page", &page.to_string())]),
+                token,
+            ))?;
+            let n = r.len();
+            out.extend(r);
+            if n < 50 {
+                break;
+            }
+        }
+        Ok(out)
+    }
+
+    /// Colaboradores de un repositorio (sin el dueño).
+    pub fn collaborators(&self, token: &str, owner: &str, repo: &str) -> Result<Vec<User>> {
+        self.send(self.with_token(self.client.get(self.url(&format!("repos/{owner}/{repo}/collaborators"))), token))
+    }
+
+    /// Da permiso de escritura a `username` sobre el repositorio.
+    pub fn add_collaborator(&self, token: &str, owner: &str, repo: &str, username: &str) -> Result<()> {
+        let _: Option<serde_json::Value> = self.send(
+            self.with_token(self.client.put(self.url(&format!("repos/{owner}/{repo}/collaborators/{username}"))), token)
+                .json(&serde_json::json!({ "permission": "write" })),
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_collaborator(&self, token: &str, owner: &str, repo: &str, username: &str) -> Result<()> {
+        let _: Option<serde_json::Value> =
+            self.send(self.with_token(self.client.delete(self.url(&format!("repos/{owner}/{repo}/collaborators/{username}"))), token))?;
+        Ok(())
+    }
+
     /// Repositorios de un usuario, filtrados por texto (proyecto o idioma).
     pub fn user_repos(&self, username: &str, query: &str) -> Result<Vec<Repo>> {
         let users = self.search_users(username, 5)?;

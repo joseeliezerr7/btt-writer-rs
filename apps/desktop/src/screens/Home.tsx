@@ -3,16 +3,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { AlertTriangle, Archive, BookOpen, CheckCircle2, CheckSquare, ChevronDown, ChevronRight, Cloud, CloudOff, Download, ExternalLink, FolderClosed, FolderInput, FolderOpen, Info, Layers, LogOut, MessageSquare, MoreVertical, Pencil, Plus, RefreshCw, Search, Settings as SettingsIcon, Square, Trash2, UserRound, X } from "lucide-react";
+import { AlertTriangle, Archive, BookOpen, CheckCircle2, CheckSquare, ChevronDown, ChevronRight, Cloud, CloudOff, Download, ExternalLink, FolderClosed, FolderInput, FolderOpen, Info, Layers, LogOut, MessageSquare, MoreVertical, Pencil, Plus, RefreshCw, Search, Settings as SettingsIcon, Square, Trash2, UserRound, Users, X } from "lucide-react";
 import { api, isTauri, resourceLabel, type ProjectItem, type ProjectRow } from "../api";
 import { useApp } from "../app-context";
 import { formatDate, useT } from "../i18n";
 import { Avatar, Button, Dialog, EmptyState, Field, Logo, Monogram, Spinner, Stat, Switch, useFeedback } from "../components/ui";
 import { BackupsDialog, bookName, FeedbackDialog, ImportDialog, MigrateDialog, NewProjectDialog, ProjectDetailsDialog, ServerLoginDialog, UpdateLibraryDialog } from "../components/dialogs";
+import { JoinCollabDialog } from "../components/collab";
 
 const BIBLE_ORDER = "gen exo lev num deu jos jdg rut 1sa 2sa 1ki 2ki 1ch 2ch ezr neh est job psa pro ecc sng isa jer lam ezk dan hos jol amo oba jon mic nam hab zep hag zec mal mat mrk luk jhn act rom 1co 2co gal eph php col 1th 2th 1ti 2ti tit phm heb jas 1pe 2pe 1jn 2jn 3jn jud rev".split(" ");
 
-type DialogKind = null | "new" | "import" | "library" | "feedback" | "backups" | "migrate" | "login" | "rename";
+type DialogKind = null | "new" | "import" | "library" | "feedback" | "backups" | "migrate" | "login" | "rename" | "join";
 
 const LS_GROUP = "btt.groupByLanguage";
 const LS_COLLAPSED = "btt.collapsedLanguages";
@@ -52,7 +53,10 @@ export default function HomeScreen() {
   const menuRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
+  // Proyectos en equipo (se marcan en la lista).
+  const [collabIds, setCollabIds] = useState<Set<string>>(new Set());
   const load = async () => {
+    api.collabProjects().then((ids) => setCollabIds(new Set(ids))).catch(() => {});
     try {
       setProjects(await api.listProjects());
     } catch (e) {
@@ -237,6 +241,7 @@ export default function HomeScreen() {
             <span className="pct" style={{ color: pct >= 100 ? "var(--success)" : undefined }}>{pct}%</span>
           </div>
           {p.has_conflicts && <span title={t("home.conflicts")} className="badge danger"><AlertTriangle size={12} /></span>}
+          {collabIds.has(p.id) && <span title={t("collab.in_team")} className="badge accent"><Users size={12} /></span>}
         </div>
         <div onClick={(e) => e.stopPropagation()}>
           {!selecting && <Button variant="ghost" icon title={t("home.info")} onClick={() => setDetails(p)}><Info size={18} /></Button>}
@@ -308,6 +313,7 @@ export default function HomeScreen() {
             <div className="menu" onClick={() => setMenu(false)}>
               <button onClick={() => setDialog("library")}><RefreshCw size={16} />{t("home.update")}</button>
               <button onClick={() => setDialog("import")}><FolderInput size={16} />{t("home.import")}</button>
+              <button onClick={() => setDialog("join")}><Users size={16} />{t("collab.join")}</button>
               <button onClick={() => setDialog("backups")}><Archive size={16} />{t("home.backups")}</button>
               {legacyRoots.length > 0 && <button onClick={() => setDialog("migrate")}><Download size={16} />{t("home.migrate")}</button>}
               <button onClick={() => setDialog("feedback")}><MessageSquare size={16} />{t("home.feedback")}</button>
@@ -419,6 +425,7 @@ export default function HomeScreen() {
 
       {dialog === "new" && <NewProjectDialog onClose={() => setDialog(null)} onCreated={(id) => { setDialog(null); load(); navigate({ name: "translate", id }); }} />}
       {dialog === "import" && <ImportDialog onClose={() => setDialog(null)} onImported={() => load()} />}
+      {dialog === "join" && <JoinCollabDialog existingIds={(projects ?? []).map((p) => p.id)} onClose={() => setDialog(null)} onJoined={(id) => { load(); navigate({ name: "translate", id }); }} />}
       {dialog === "library" && <UpdateLibraryDialog onClose={() => setDialog(null)} />}
       {dialog === "feedback" && <FeedbackDialog onClose={() => setDialog(null)} />}
       {dialog === "backups" && <BackupsDialog onClose={() => setDialog(null)} onImported={load} />}

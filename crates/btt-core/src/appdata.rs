@@ -54,6 +54,8 @@ impl Paths {
     pub fn settings_file(&self) -> PathBuf { self.root.join("settings.json") }
     pub fn profile_file(&self) -> PathBuf { self.root.join("profile.json") }
     pub fn backup_state_file(&self) -> PathBuf { self.root.join("backup-state.json") }
+    /// Proyectos en equipo de este dispositivo (repositorio compartido, última sincronización).
+    pub fn collab_file(&self) -> PathBuf { self.root.join("collab-state.json") }
 
     pub fn ensure(&self) -> Result<()> {
         for d in [self.translations(), self.backups(), self.database(), self.containers(), self.exports(), self.imported(), self.fonts(), self.logs(), self.temp()] {

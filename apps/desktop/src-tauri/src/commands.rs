@@ -17,12 +17,12 @@ use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use tauri::State;
 
-type R<T> = Result<T, String>;
+pub(crate) type R<T> = Result<T, String>;
 
 /// Ejecuta trabajo bloqueante (HTTP con reqwest::blocking, git) en un hilo aparte.
 /// Los comandos `async` corren en el runtime de Tauri y un cliente bloqueante ahí
 /// aborta con "Cannot start a runtime from within a runtime".
-async fn blocking<T: Send + 'static>(app: tauri::AppHandle, f: impl FnOnce(&AppState) -> R<T> + Send + 'static) -> R<T> {
+pub(crate) async fn blocking<T: Send + 'static>(app: tauri::AppHandle, f: impl FnOnce(&AppState) -> R<T> + Send + 'static) -> R<T> {
     tauri::async_runtime::spawn_blocking(move || {
         let st = app.state::<AppState>();
         f(&st)
@@ -31,7 +31,7 @@ async fn blocking<T: Send + 'static>(app: tauri::AppHandle, f: impl FnOnce(&AppS
     .map_err(|e| format!("la tarea se interrumpió: {e}"))?
 }
 
-fn err<E: std::fmt::Display>(e: E) -> String {
+pub(crate) fn err<E: std::fmt::Display>(e: E) -> String {
     e.to_string()
 }
 
@@ -41,7 +41,7 @@ fn source_project_slug(m: &Manifest) -> &str {
     if m.type_.id == "tw" { "bible" } else { &m.project.id }
 }
 
-fn open_project(st: &AppState, id: &str) -> R<Project> {
+pub(crate) fn open_project(st: &AppState, id: &str) -> R<Project> {
     Project::open_by_id(&st.paths.translations(), id).map_err(err)
 }
 
@@ -65,7 +65,7 @@ fn url_host(url: &str) -> Option<&str> {
 }
 
 /// Solo se entrega el token de sesión a repositorios HTTPS del servidor configurado.
-fn check_clone_url(st: &AppState, url: &str) -> R<()> {
+pub(crate) fn check_clone_url(st: &AppState, url: &str) -> R<()> {
     let api = st.settings.lock().unwrap_or_else(|e| e.into_inner()).git_api_url.clone();
     match (url_host(url), url_host(&api)) {
         (Some(h), Some(api_host)) if h.eq_ignore_ascii_case(api_host) => Ok(()),
@@ -73,7 +73,7 @@ fn check_clone_url(st: &AppState, url: &str) -> R<()> {
     }
 }
 
-fn now() -> u64 {
+pub(crate) fn now() -> u64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
@@ -1332,7 +1332,7 @@ async fn import_usfm(app: tauri::AppHandle, path: String, language: String, book
 }).await
 }
 
-fn uuid_simple() -> String {
+pub(crate) fn uuid_simple() -> String {
     // Con contador: dos importaciones en el mismo segundo no chocan.
     static SEQ: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
     let n = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -1489,7 +1489,7 @@ pub struct UploadResult {
     repo_url: String,
 }
 
-fn credentials(st: &AppState) -> R<(Credentials, String)> {
+pub(crate) fn credentials(st: &AppState) -> R<(Credentials, String)> {
     let p = st.profile.lock().unwrap_or_else(|e| e.into_inner());
     let s = p.session.as_ref().ok_or_else(|| "Inicia sesión en el servidor para subir proyectos".to_string())?;
     Ok((Credentials { username: s.user.username.clone(), token: s.token.sha1.clone() }, s.user.username.clone()))
@@ -1501,27 +1501,34 @@ async fn upload_project(app: tauri::AppHandle, id: String) -> R<UploadResult> {
     let p = open_project(st, &id)?;
     let (creds, username) = credentials(st)?;
     let settings = st.settings.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let client = WacsClient::new(&settings.git_api_url).map_err(err)?;
-    let repo = client.create_repo(&creds.token, &username, &id).map_err(|e| match e {
-        btt_core::Error::Unauthorized => "La sesión expiró. Inicia sesión de nuevo.".to_string(),
-        other => other.to_string(),
-    })?;
+    // Un proyecto en equipo se sube al repositorio compartido, no al propio del usuario.
+    let (clone_url, html_url, reader_user) = match crate::collab::active_remote(st, &id) {
+        Some(c) => (c.clone_url, c.html_url, c.owner),
+        None => {
+            let client = WacsClient::new(&settings.git_api_url).map_err(err)?;
+            let repo = client.create_repo(&creds.token, &username, &id).map_err(|e| match e {
+                btt_core::Error::Unauthorized => "La sesión expiró. Inicia sesión de nuevo.".to_string(),
+                other => other.to_string(),
+            })?;
+            (repo.clone_url, repo.html_url, username.clone())
+        }
+    };
     let author = st.author();
-    let merge = gitrepo::pull(&p.root, &repo.clone_url, Some(&creds), &author).map_err(err)?;
+    let merge = gitrepo::pull(&p.root, &clone_url, Some(&creds), &author).map_err(err)?;
     if let MergeStatus::Conflicts { .. } = &merge {
-        return Ok(UploadResult { push: PushStatus::Rejected { reason: "conflictos".into() }, merge: Some(merge), url: String::new(), repo_url: repo.html_url });
+        return Ok(UploadResult { push: PushStatus::Rejected { reason: "conflictos".into() }, merge: Some(merge), url: String::new(), repo_url: html_url });
     }
     if matches!(merge, MergeStatus::AuthFailure) {
         return Err("El servidor rechazó las credenciales. Inicia sesión de nuevo.".into());
     }
-    let push = gitrepo::push(&p.root, &repo.clone_url, &creds).map_err(err)?;
+    let push = gitrepo::push(&p.root, &clone_url, &creds).map_err(err)?;
     if matches!(push, PushStatus::Ok | PushStatus::UpToDate) {
         st.backup_state.lock().unwrap_or_else(|e| e.into_inner()).last_time.insert(format!("upload:{id}"), now());
         let _ = st.save_backup_state();
     }
     Ok(UploadResult {
-        url: btt_core::wacs::reader_url(&settings.reader_url, &username, &id),
-        repo_url: repo.html_url,
+        url: btt_core::wacs::reader_url(&settings.reader_url, &reader_user, &id),
+        repo_url: html_url,
         push,
         merge: Some(merge),
     })
@@ -1533,6 +1540,9 @@ async fn pull_project(app: tauri::AppHandle, id: String) -> R<MergeStatus> {
     blocking(app, move |st| {
     let p = open_project(st, &id)?;
     let (creds, username) = credentials(st)?;
+    if let Some(c) = crate::collab::active_remote(st, &id) {
+        return gitrepo::pull(&p.root, &c.clone_url, Some(&creds), &st.author()).map_err(err);
+    }
     let api = st.settings.lock().unwrap_or_else(|e| e.into_inner()).git_api_url.clone();
     let client = WacsClient::new(&api).map_err(err)?;
     let repo = client.get_repo(Some(&creds.token), &username, &id).map_err(|e| match e {
@@ -1726,6 +1736,19 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool {
         restore_backup_branch,
         search_wacs,
         import_from_wacs,
+        crate::collab::collab_status,
+        crate::collab::collab_projects,
+        crate::collab::collab_enable,
+        crate::collab::collab_disable,
+        crate::collab::collab_members,
+        crate::collab::collab_add_member,
+        crate::collab::collab_remove_member,
+        crate::collab::collab_shared_repos,
+        crate::collab::collab_join,
+        crate::collab::collab_sync,
+        crate::collab::collab_release,
+        crate::collab::collab_claim,
+        crate::collab::search_users,
         list_backups,
         run_backup_now,
         migrate_legacy,

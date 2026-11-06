@@ -327,6 +327,45 @@ export interface UploadResult {
   repo_url: string;
 }
 
+// Trabajo en equipo (repositorio compartido + reservas de chunk)
+export interface CollabConfig {
+  enabled: boolean;
+  clone_url: string;
+  html_url: string;
+  owner: string;
+  repo: string;
+  last_sync: number;
+  last_error: string;
+}
+export interface ClaimView {
+  key: string;
+  user: string;
+  since: number;
+  until: number;
+}
+export interface CollabStatus {
+  config: CollabConfig | null;
+  claims: ClaimView[];
+  conflicts: string[];
+  me: string;
+  syncing: boolean;
+}
+export interface SyncReport {
+  merge: MergeStatus | null;
+  push: PushStatus | null;
+  changed: string[];
+  conflicts: string[];
+  claims: ClaimView[];
+  offline: boolean;
+  error: string | null;
+  at: number;
+}
+export interface CollabMembers {
+  owner: string;
+  collaborators: User[];
+  can_manage: boolean;
+}
+
 export interface Repo {
   id: number;
   name: string;
@@ -463,6 +502,20 @@ export const api = {
   restoreBackupBranch: (id: string) => call<void>("restore_backup_branch", { id }),
   searchWacs: (username: string, query: string) => call<Repo[]>("search_wacs", { username, query }),
   importFromWacs: (cloneUrl: string, mode: ImportMode) => call<ImportOutcome>("import_from_wacs", { cloneUrl, mode }),
+  // Equipo
+  collabStatus: (id: string) => call<CollabStatus>("collab_status", { id }),
+  collabProjects: () => call<string[]>("collab_projects"),
+  collabEnable: (id: string, members: string[]) => call<CollabStatus>("collab_enable", { id, members }),
+  collabDisable: (id: string) => call<CollabStatus>("collab_disable", { id }),
+  collabMembers: (id: string) => call<CollabMembers>("collab_members", { id }),
+  collabAddMember: (id: string, username: string) => call<CollabMembers>("collab_add_member", { id, username }),
+  collabRemoveMember: (id: string, username: string) => call<CollabMembers>("collab_remove_member", { id, username }),
+  collabSharedRepos: () => call<Repo[]>("collab_shared_repos"),
+  collabJoin: (cloneUrl: string, mode: ImportMode) => call<ImportOutcome>("collab_join", { cloneUrl, mode }),
+  collabSync: (id: string, editing: string | null, push: boolean) => call<SyncReport>("collab_sync", { id, editing, push }),
+  collabRelease: (id: string, key: string) => call<void>("collab_release", { id, key }),
+  collabClaim: (id: string, key: string) => call<boolean>("collab_claim", { id, key }),
+  searchUsers: (query: string) => call<User[]>("search_users", { query }),
 
   listBackups: () => call<BackupEntry[]>("list_backups"),
   runBackupNow: () => call<BackupReport>("run_backup_now"),

@@ -1,7 +1,7 @@
 // Pantalla de traducción: modos lectura / chunk / revisión, fuentes, recursos,
 // búsqueda, historial, conflictos y edición de ayudas (tN/tQ/tW).
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
-import { AlertTriangle, BookOpen, Check, CheckCheck, Download, Eye, EyeOff, History, Home, LayoutList, ListChecks, Move, Pencil, Plus, Printer, Search, Settings as SettingsIcon, Upload, X } from "lucide-react";
+import { AlertTriangle, BookOpen, Check, CheckCheck, Download, Eye, EyeOff, History, Home, LayoutList, ListChecks, Move, Pencil, Plus, Printer, Search, Settings as SettingsIcon, Upload, Users, X } from "lucide-react";
 import {
   api,
   type ChunkData,
@@ -18,6 +18,7 @@ import { useApp } from "../app-context";
 import { formatDate, useT } from "../i18n";
 import { Button, Dialog, IconBadge, Logo, SimpleMarkdown, Spinner, Switch, Tabs, useFeedback } from "../components/ui";
 import { bookName, DownloadLanguageButton, ExportDialog, issueText, PrintDialog, SourceSelectionDialog } from "../components/dialogs";
+import { ago, CollabDialog, CollabPill, useCollab, type Collab } from "../components/collab";
 import { insertMarkerAt, MARKER_MIME, normalizeVerseMarkers, removeMarker, VerseArranger } from "../components/verses";
 import { VerseEditor, VERSE_MIME, type VerseEditorHandle } from "../components/verse-editor";
 import { removeVerse } from "../components/verse-markers";
@@ -55,6 +56,9 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
   const [refresh, setRefresh] = useState(0);
   const [bookTitleLabel, setBookTitleLabel] = useState("");
   const loadedOnce = useRef(false);
+  const [showCollab, setShowCollab] = useState(false);
+  // Chunks que cambiaron en la última sincronización del equipo (las tarjetas afectadas se recargan).
+  const [remote, setRemote] = useState<{ tick: number; changed: string[] }>({ tick: 0, changed: [] });
 
   const load = useCallback(async () => {
     try {
@@ -74,6 +78,13 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
   useEffect(() => {
     load();
   }, [load, refresh]);
+
+  const collab = useCollab(id, (changed, conflicts) => {
+    setRemote((r) => ({ tick: r.tick + 1, changed }));
+    load();
+    if (conflicts.length) fb.toast(t("collab.remote_conflicts", { n: conflicts.length }), "error");
+    else if (changed.length) fb.toast(t("collab.remote_changes", { n: changed.length }), "success");
+  });
 
   // Autoguardado git cada 2 minutos y al salir.
   useEffect(() => {
@@ -168,6 +179,7 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
           {mode !== "read" && !isHelps && (
             <Button size="sm" variant={blind ? "primary" : "ghost"} title={t("translate.blind")} onClick={() => setBlind((b) => !b)}>{blind ? <EyeOff size={14} /> : <Eye size={14} />}</Button>
           )}
+          <CollabPill collab={collab} onClick={() => setShowCollab(true)} />
           {mode === "review" && !isHelps && <MarkAllButton id={id} onDone={() => setRefresh((r) => r + 1)} />}
         </div>
 
@@ -210,6 +222,8 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
             onBegin={() => setMode("chunk")}
             onChanged={() => { load(); }}
             onResolve={jumpToConflict}
+            collab={collab}
+            remote={remote}
           />
         ) : null}
       </main>
@@ -217,6 +231,7 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
       {showSources && <SourceSelectionDialog detail={detail} onClose={() => setShowSources(false)} onChanged={() => setRefresh((r) => r + 1)} />}
       {showExport && <ExportDialog project={detail.item} onClose={() => setShowExport(false)} onReview={(files) => { setShowExport(false); setMode("review"); const [ch, f] = files[0]?.split("/") ?? []; if (ch) { setChapter(ch); setFocus(f?.replace(".txt", "") ?? null); } setRefresh((r) => r + 1); }} />}
       {showPrint && <PrintDialog id={id} isObs={detail.manifest.resource.id === "obs"} onClose={() => setShowPrint(false)} />}
+      {showCollab && <CollabDialog id={id} collab={collab} onClose={() => setShowCollab(false)} />}
       <span className="hidden">{formatDate(0, lang, "")}</span>
     </div>
   );
@@ -291,6 +306,8 @@ function ChapterView(props: {
   onBegin: () => void;
   onChanged: () => void;
   onResolve: () => void;
+  collab: Collab;
+  remote: { tick: number; changed: string[] };
 }) {
   const { t } = useT();
   const { detail, chapter, mode, source } = props;
@@ -377,6 +394,8 @@ function ChapterView(props: {
             rtl={props.rtl}
             focused={props.focus === c.id}
             onChanged={props.onChanged}
+            collab={props.collab}
+            remote={props.remote}
           />
         </div>
       ))}
@@ -448,6 +467,8 @@ function ChunkCard(props: {
   rtl: boolean;
   focused: boolean;
   onChanged: () => void;
+  collab: Collab;
+  remote: { tick: number; changed: string[] };
 }) {
   const { t, lang } = useT();
   const fb = useFeedback();
@@ -553,12 +574,43 @@ function ChunkCard(props: {
         return;
       }
       setEditing(false);
+      endCollab();
       await reload();
       props.onChanged();
     } catch (e) {
       fb.error(e);
     }
   };
+
+  // ---- equipo: reserva del chunk mientras se edita y recarga cuando cambia en el servidor
+  const collabKey = `${chapter}/${chunk.id}`;
+  const claim = props.collab.enabled ? props.collab.claims.find((c) => c.key === collabKey && c.user !== props.collab.me && c.until * 1000 > Date.now()) : undefined;
+  const editingRef = useRef(false);
+  editingRef.current = editing;
+  /** Avisa si otra persona tiene el chunk y reserva. `false` si el usuario desiste. */
+  const beginCollab = async (ask: boolean) => {
+    if (!props.collab.enabled) return true;
+    if (claim && ask) {
+      const ok = await fb.confirm(t("collab.claimed_title"), t("collab.claimed_confirm", { user: claim.user, ago: ago(claim.since, t) }), { okLabel: t("collab.edit_anyway") });
+      if (!ok) return false;
+    } else if (claim) {
+      fb.toast(t("collab.claimed_by", { user: claim.user }), "error");
+    }
+    void props.collab.startEditing(collabKey);
+    return true;
+  };
+  const endCollab = () => {
+    if (props.collab.enabled) void props.collab.stopEditing(collabKey);
+  };
+  useEffect(() => () => { if (editingRef.current) endCollab(); }, []);
+  useEffect(() => {
+    if (props.remote.changed.includes(`${collabKey}.txt`)) {
+      // Lo que llegó del servidor manda: se descarta lo no guardado de los últimos instantes.
+      if (timer.current) clearTimeout(timer.current);
+      pending.current = null;
+      reload();
+    }
+  }, [props.remote.tick]);
 
   const startEdit = async () => {
     if (data?.finished) {
@@ -573,6 +625,7 @@ function ChunkCard(props: {
       await reload();
       props.onChanged();
     }
+    if (!(await beginCollab(true))) return;
     setEditing(true);
     setTimeout(() => (isTitle ? textRef.current?.focus() : editorRef.current?.focus()), 50);
   };
@@ -687,12 +740,13 @@ function ChunkCard(props: {
       <div className={"pane target" + (data?.finished ? " done" : "") + (data?.has_conflict ? " conflict" : "")}>
         <div className="pane-head">
           <span className="title">{t("translate.target")}</span>
+          {claim && <span className="badge warn claim-badge" title={`${t("collab.claimed_by", { user: claim.user })} · ${t("collab.claimed_since", { ago: ago(claim.since, t) })}`}><Users size={11} /> {claim.user}</span>}
           {!saved ? <span className="save-state"><span className="spinner" style={{ width: 10, height: 10, borderWidth: 2 }} /> {t("translate.saving")}</span> : data?.finished && !props.review ? <span className="badge ok"><Check size={11} /> {t("translate.done")}</span> : null}
           <span className="grow" />
           {data && !isTitle && !data.has_conflict && (
             props.review ? (
               <>
-                {!data.finished && <Button size="sm" variant={editing ? "primary" : "ghost"} icon={!editing} title={t("translate.chunk")} onClick={() => (editing ? setEditing(false) : startEdit())}>{editing ? t("common.done") : <Pencil size={14} />}</Button>}
+                {!data.finished && <Button size="sm" variant={editing ? "primary" : "ghost"} icon={!editing} title={t("translate.chunk")} onClick={() => { if (editing) { setEditing(false); endCollab(); } else startEdit(); }}>{editing ? t("common.done") : <Pencil size={14} />}</Button>}
                 {editing && !isHelps && !arrange && <Button size="sm" variant="ghost" title={t("translate.add_footnote")} onClick={insertFootnote}>ƒ</Button>}
                 {editing && arrangeBtn}
                 <Button size="sm" variant="ghost" icon title={t("translate.history")} onClick={openHistory}><History size={14} /></Button>
@@ -788,7 +842,7 @@ function ChunkCard(props: {
                 value={text}
                 placeholder={placeholder}
                 onChange={onEditorChange}
-                onFocus={() => { if (!props.review) setEditing(true); }}
+                onFocus={() => { if (!props.review && !editing) { setEditing(true); void beginCollab(false); } }}
                 spellCheck={false}
               />
             ) : (
@@ -800,7 +854,7 @@ function ChunkCard(props: {
                 rtl={props.rtl}
                 placeholder={placeholder}
                 onChange={save}
-                onFocus={() => { if (!props.review) setEditing(true); }}
+                onFocus={() => { if (!props.review && !editing) { setEditing(true); void beginCollab(false); } }}
               />
             )}
           </>

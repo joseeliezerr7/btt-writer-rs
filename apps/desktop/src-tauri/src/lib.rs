@@ -1,5 +1,6 @@
 //! App Tauri de BTT Writer: estado compartido, arranque y registro de comandos.
 
+mod collab;
 mod commands;
 
 use btt_core::appdata::{Paths, Profile, Settings};
@@ -7,7 +8,7 @@ use btt_core::backup::BackupState;
 use btt_core::library::Library;
 use btt_core::project::ProjectScan;
 use btt_core::rc::ResourceContainer;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::{Emitter, Manager};
@@ -25,6 +26,10 @@ pub struct AppState {
     pub list_cache: Mutex<HashMap<String, ProjectScan>>,
     /// Solo una pasada de respaldo a la vez (temporizador vs. "respaldar ahora").
     pub backup_running: Mutex<()>,
+    /// Proyectos en equipo de este dispositivo (id → repositorio compartido).
+    pub collab: Mutex<HashMap<String, collab::CollabConfig>>,
+    /// Proyectos con una sincronización en curso.
+    pub collab_running: Mutex<HashSet<String>>,
     pub device_name: String,
 }
 
@@ -57,6 +62,12 @@ impl AppState {
 
     pub fn save_backup_state(&self) -> btt_core::Result<()> {
         self.backup_state.lock().unwrap_or_else(|e| e.into_inner()).save(&self.paths.backup_state_file())
+    }
+
+    pub fn save_collab(&self) -> btt_core::Result<()> {
+        let cfg = self.collab.lock().unwrap_or_else(|e| e.into_inner());
+        let json = serde_json::to_string_pretty(&*cfg)?;
+        btt_core::project::atomic_write(&self.paths.collab_file(), &json)
     }
 
     /// Scan de un proyecto, reutilizando la caché si los archivos no cambiaron.
@@ -144,6 +155,7 @@ pub fn run() {
             let profile = Profile::load(&paths.profile_file());
             let backup_state = BackupState::load(&paths.backup_state_file());
             let list_cache = load_list_cache(&paths.list_cache_file());
+            let collab_cfg = collab::load_configs(&paths.collab_file());
             let state = AppState {
                 paths,
                 settings: Mutex::new(settings),
@@ -153,6 +165,8 @@ pub fn run() {
                 rc_cache: Mutex::new(HashMap::new()),
                 list_cache: Mutex::new(list_cache),
                 backup_running: Mutex::new(()),
+                collab: Mutex::new(collab_cfg),
+                collab_running: Mutex::new(HashSet::new()),
                 device_name: device_name(),
             };
             app.manage(state);

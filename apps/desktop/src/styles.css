@@ -577,3 +577,18 @@ mark { background: #ffe58a; color: inherit; border-radius: 2px; }
   .selection-bar { position: static; }
   .user-chip > .ellipsis { max-width: 110px; }
 }
+
+/* Trabajo en equipo */
+.collab-pill { display: inline-flex; align-items: center; gap: .4rem; max-width: 240px; height: 30px; padding: 0 .65rem; border-radius: 999px; border: 1px solid var(--border); background: var(--surface); color: var(--text); font-size: .8rem; font-weight: 600; cursor: pointer; }
+.collab-pill:hover { background: var(--surface-2); }
+.collab-pill .dot, .collab-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--success); flex: none; }
+.collab-pill.busy .dot { background: var(--primary); animation: pulse 1s infinite; }
+.collab-pill.offline .dot, .collab-dot.offline { background: var(--muted); }
+.collab-pill.error .dot, .collab-dot.error { background: var(--danger); }
+.collab-pill .badge { padding: 0 .4rem; height: 18px; font-size: .7rem; }
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .35; } }
+.collab-how { margin: 0; padding-left: 1.2rem; display: grid; gap: .35rem; }
+.member-row { gap: .5rem; padding: .35rem .5rem; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-2); }
+.menu.static { position: static; margin-top: .3rem; box-shadow: none; animation: none; }
+.claim-badge { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge.accent { background: var(--primary-soft); color: var(--primary); }

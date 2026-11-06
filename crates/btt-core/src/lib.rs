@@ -16,12 +16,14 @@
 //! * [`tstudio`]    — respaldo/importación `.tstudio`.
 //! * [`validation`] — validación de chunks y formato de ayudas.
 //! * [`wacs`]       — API de WACS/DCS (Gitea).
+//! * [`collab`]     — trabajo en equipo sobre un repositorio compartido.
 //! * [`backup`]     — respaldos automáticos.
 //! * [`print`]      — HTML imprimible para PDF.
 //! * [`appdata`]    — rutas, ajustes, perfil y migración.
 
 pub mod appdata;
 pub mod backup;
+pub mod collab;
 pub mod conflicts;
 pub mod error;
 pub mod gitrepo;

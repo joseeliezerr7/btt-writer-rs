@@ -480,6 +480,11 @@ fn fetch_and_merge(repo: &Repository, remote_name: &str, creds: Option<&Credenti
                 if let Some(ours) = blob_text(repo, &local, &p) {
                     std::fs::write(&full, ours)?;
                 }
+            } else if p == crate::collab::COLLAB_FILE {
+                // Reservas de chunk del trabajo en equipo: se unen, nunca quedan con marcadores.
+                let ours = blob_text(repo, &local, &p).unwrap_or_default();
+                let theirs = blob_text(repo, &remote_commit, &p).unwrap_or_default();
+                std::fs::write(&full, crate::collab::merge_json(&ours, &theirs))?;
             } else {
                 conflicted.push(p.clone());
             }
@@ -523,6 +528,43 @@ pub fn clone(url: &str, creds: Option<&Credentials>, dest: &Path) -> Result<()> 
             _ => Err(e.into()),
         },
     }
+}
+
+/// Archivos distintos entre dos commits (`None` = árbol vacío), rutas relativas con `/`.
+pub fn changed_files(path: &Path, from: Option<&str>, to: Option<&str>) -> Result<Vec<String>> {
+    if from == to {
+        return Ok(vec![]);
+    }
+    let repo = Repository::open(path)?;
+    let tree = |id: Option<&str>| -> Result<Option<git2::Tree<'_>>> {
+        match id {
+            Some(h) => Ok(Some(repo.find_commit(Oid::from_str(h)?)?.tree()?)),
+            None => Ok(None),
+        }
+    };
+    let a = tree(from)?;
+    let b = tree(to)?;
+    let diff = repo.diff_tree_to_tree(a.as_ref(), b.as_ref(), None)?;
+    let mut out: Vec<String> = diff
+        .deltas()
+        .filter_map(|d| d.new_file().path().or(d.old_file().path()).map(|p| p.to_string_lossy().replace('\\', "/")))
+        .collect();
+    out.sort();
+    out.dedup();
+    Ok(out)
+}
+
+/// El error viene de no poder hablar con el servidor (sin red, DNS, tiempo agotado),
+/// no de un rechazo suyo: se puede reintentar más tarde sin molestar al usuario.
+pub fn is_network_error(e: &Error) -> bool {
+    let Error::Git(g) = e else { return false };
+    if matches!(g.class(), git2::ErrorClass::Net | git2::ErrorClass::Ssl | git2::ErrorClass::Http) {
+        return !g.message().contains("401") && !g.message().contains("404");
+    }
+    let m = g.message().to_lowercase();
+    ["failed to connect", "could not resolve", "couldn't resolve", "timed out", "connection", "network", "unreachable", "failed to send request", "failed to receive"]
+        .iter()
+        .any(|s| m.contains(s))
 }
 
 /// Archivos del árbol de trabajo que contienen marcadores de conflicto.
