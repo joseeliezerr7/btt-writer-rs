@@ -311,7 +311,8 @@ pub async fn collab_claim(app: tauri::AppHandle, id: String, key: String) -> R<b
         let p = open_project(st, &id)?;
         let (_, user) = credentials(st)?;
         let t = now();
-        let free = collab::claim(&p.root, &key, &user, t).map_err(err)?;
+        // Volver a entrar en un chunk ya reservado no reescribe la reserva (ni genera commit).
+        let free = collab::renew(&p.root, &key, &user, t).map_err(err)? != collab::Renewed::Taken;
         btt_core::hold::start(&p.root, &btt_core::hold::chunk_path(&key), t).map_err(err)?;
         Ok(free)
     })

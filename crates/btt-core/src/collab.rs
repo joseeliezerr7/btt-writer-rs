@@ -108,6 +108,29 @@ pub fn claim(root: &Path, key: &str, user: &str, now: u64) -> Result<bool> {
     Ok(true)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Renewed {
+    /// La reserva sigue vigente con margen: no se tocó el archivo (ni habrá commit).
+    Kept,
+    /// Se creó o se alargó la reserva: `collab.json` cambió.
+    Written,
+    /// Otra persona la tiene.
+    Taken,
+}
+
+/// Como `claim`, pero solo escribe cuando hace falta: si la reserva propia aún tiene
+/// más de la mitad del plazo, se deja como está. Así una edición larga sube la reserva
+/// cada ~7 min en vez de en cada pasada de 40 s.
+pub fn renew(root: &Path, key: &str, user: &str, now: u64) -> Result<Renewed> {
+    let f = load(root);
+    if let Some(c) = f.claims.get(key) {
+        if c.user == user && c.until > now && c.until - now > CLAIM_TTL_SECS / 2 {
+            return Ok(Renewed::Kept);
+        }
+    }
+    Ok(if claim(root, key, user, now)? { Renewed::Written } else { Renewed::Taken })
+}
+
 /// Quita la reserva de `key` si es de `user`.
 pub fn release(root: &Path, key: &str, user: &str, now: u64) -> Result<()> {
     let mut f = load(root);
@@ -192,7 +215,7 @@ pub fn sync(root: &Path, url: &str, creds: Option<&Credentials>, author: &Author
     let mut report = SyncReport { at: now, ..Default::default() };
     let held = opts.editing.as_deref().map(crate::hold::chunk_path);
     if let Some(k) = &opts.editing {
-        if let Err(e) = claim(root, k, &opts.user, now) {
+        if let Err(e) = renew(root, k, &opts.user, now) {
             report.error = Some(e.to_string());
         }
         // El chunk en edición se retiene: no se sube hasta cerrarlo con "Listo".
@@ -206,15 +229,24 @@ pub fn sync(root: &Path, url: &str, creds: Option<&Credentials>, author: &Author
     report.changed = crate::hold::close_all(root, held.as_deref());
     // El commit de un chunk cerrado dice quién y qué ("maria: 1:5"), legible en el
     // historial de WACS; y quien aporta queda en los traductores del manifiesto.
-    let message = if closed.is_empty() {
-        gitrepo::AUTOSAVE_MESSAGE.to_string()
-    } else {
+    let who = if opts.user.is_empty() { author.name.as_str() } else { opts.user.as_str() };
+    let dirty: Vec<String> = gitrepo::dirty_files(root).unwrap_or_default().into_iter().filter(|p| Some(p) != held.as_ref()).collect();
+    // Cerrar un chunk sin haberlo tocado no es una traducción: no cuenta como cierre.
+    let closed: Vec<String> = closed.into_iter().filter(|p| dirty.contains(p)).collect();
+    let message = if !closed.is_empty() {
         if let Ok(mut p) = crate::project::Project::open(root) {
             p.manifest.add_translator(&author.name);
             let _ = p.save_manifest();
         }
-        let who = if opts.user.is_empty() { author.name.as_str() } else { opts.user.as_str() };
         format!("{who}: {}", closed.iter().map(|p| chunk_label(p)).collect::<Vec<_>>().join(", "))
+    } else if dirty == [COLLAB_FILE] {
+        // Solo cambió la reserva: que en WACS no parezca una traducción.
+        match &opts.editing {
+            Some(k) => format!("{who} reserva {}", chunk_label(k)),
+            None => format!("{who} libera su reserva"),
+        }
+    } else {
+        gitrepo::AUTOSAVE_MESSAGE.to_string()
     };
     // Primero el commit de lo propio: así `changed` solo recoge lo que vino del servidor.
     if let Err(e) = gitrepo::commit_all(root, author, &message) {
@@ -420,6 +452,40 @@ mod tests {
         assert!(Project::open(&b.root).unwrap().manifest.translators.contains(&"ana".to_string()));
         // Quien lo recibe por fusión no figura como autor de ese chunk.
         assert!(h.iter().all(|c| c.author == "ana"), "{h:?}");
+    }
+
+    #[test]
+    fn la_reserva_solo_se_sube_cuando_cambia() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (url, a, b) = team(tmp.path());
+        a.write_chunk("01", "01", "\\v 1 base").unwrap();
+        sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", None));
+        sync(&b.root, &url, Some(&creds()), &author("beto"), &opts("beto", None));
+
+        // Ana abre el chunk: una reserva, con mensaje claro en el historial.
+        let r = sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", Some("01/01")));
+        assert_eq!(r.push, Some(PushStatus::Ok));
+        let h = gitrepo::file_history(&a.root, COLLAB_FILE).unwrap();
+        assert_eq!(h[0].message, "ana reserva 1:1");
+        let head = gitrepo::head_hash(&a.root);
+
+        // Las pasadas siguientes, sin escribir nada, no generan ni commit ni subida.
+        for _ in 0..3 {
+            let r = sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", Some("01/01")));
+            assert!(r.error.is_none(), "{r:?}");
+        }
+        assert_eq!(gitrepo::head_hash(&a.root), head);
+        assert_eq!(gitrepo::file_history(&a.root, COLLAB_FILE).unwrap().len(), h.len());
+
+        // Pasada la mitad del plazo sí se renueva; y al soltarla, otro mensaje claro.
+        let t = now() + CLAIM_TTL_SECS / 2 + 1;
+        assert_eq!(renew(&a.root, "01/01", "ana", t).unwrap(), Renewed::Written);
+        assert_eq!(renew(&a.root, "01/01", "ana", t).unwrap(), Renewed::Kept);
+        assert_eq!(renew(&a.root, "01/01", "beto", t).unwrap(), Renewed::Taken);
+        release(&a.root, "01/01", "ana", t).unwrap();
+        sync(&a.root, &url, Some(&creds()), &author("ana"), &opts("ana", None));
+        let h = gitrepo::file_history(&a.root, COLLAB_FILE).unwrap();
+        assert_eq!(h[0].message, "ana libera su reserva");
     }
 
     #[test]

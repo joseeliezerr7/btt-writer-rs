@@ -195,6 +195,21 @@ pub(crate) fn commit_all_unlocked(path: &Path, author: &Author, message: &str) -
     Ok(Some(oid.to_string()))
 }
 
+/// Archivos con cambios sin commit (modificados, nuevos o borrados), ordenados.
+pub fn dirty_files(path: &Path) -> Result<Vec<String>> {
+    let repo = open_or_init(path)?;
+    let mut so = git2::StatusOptions::new();
+    so.include_untracked(true).recurse_untracked_dirs(true).include_ignored(false);
+    let mut out: Vec<String> = repo
+        .statuses(Some(&mut so))?
+        .iter()
+        .filter(|s| !s.status().is_empty() && !s.status().is_ignored())
+        .filter_map(|s| s.path().map(|p| p.to_string()))
+        .collect();
+    out.sort();
+    Ok(out)
+}
+
 pub fn head_hash(path: &Path) -> Option<String> {
     let repo = Repository::open(path).ok()?;
     let oid = repo.head().ok()?.target()?;
