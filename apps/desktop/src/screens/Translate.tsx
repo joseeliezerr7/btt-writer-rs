@@ -12,6 +12,7 @@ import {
   type ProjectDetail,
   type ResourceRow,
   type SourceChunkView,
+  type VerseAuthor,
   type WordArticle,
 } from "../api";
 import { useApp } from "../app-context";
@@ -22,6 +23,7 @@ import { ago, CollabDialog, CollabPill, useCollab, type Collab } from "../compon
 import { insertMarkerAt, MARKER_MIME, normalizeVerseMarkers, removeMarker, VerseArranger } from "../components/verses";
 import { VerseEditor, VERSE_MIME, type VerseEditorHandle } from "../components/verse-editor";
 import { removeVerse } from "../components/verse-markers";
+import { authorGroups } from "../components/authors";
 
 /** Lista numerada de la verificación previa a marcar un chunk como terminado. */
 function Checklist({ t }: { t: (k: string) => string }) {
@@ -516,7 +518,13 @@ function ChunkCard(props: {
   // Posición del cursor a restaurar tras una normalización que añadió espacios.
   const caretFix = useRef<number | null>(null);
 
-  const reload = useCallback(() => api.readChunk(id, chapter, chunk.id).then((d) => { setData(d); setText(d.text); }).catch(fb.error), [id, chapter, chunk.id]);
+  // Quién escribió cada versículo (según el historial git); se consulta aparte para no retrasar el texto.
+  const [authors, setAuthors] = useState<VerseAuthor[]>([]);
+  const reload = useCallback(() => api.readChunk(id, chapter, chunk.id).then((d) => {
+    setData(d);
+    setText(d.text);
+    if (!isTitle && !isHelps) api.chunkAuthors(id, chapter, chunk.id).then(setAuthors).catch(() => setAuthors([]));
+  }).catch(fb.error), [id, chapter, chunk.id]);
   useEffect(() => {
     reload();
   }, [reload]);
@@ -728,6 +736,9 @@ function ChunkCard(props: {
       const from = all.find((x) => x.id.startsWith(m[1]));
       return from ? t("translate.restored_from", { date: formatDate(from.time, lang, "") }) : t("translate.restored");
     }
+    // "maria: 1:5" es el commit con que se cerró el chunk en el equipo.
+    const closed = /^(\S+): \S+:\S+/.exec(h.message);
+    if (closed) return t("translate.closed_by", { user: closed[1] });
     return h.message;
   };
 
@@ -890,6 +901,7 @@ function ChunkCard(props: {
         {data && data.issues.length > 0 && props.review && !isTitle && text && !editing && (
           <div className="issue-text"><AlertTriangle size={14} style={{ marginTop: 2, flex: "none" }} /><span>{data.issues.map((i) => issueText(t, i)).join(" ")}</span></div>
         )}
+        {!editing && !data?.has_conflict && <ChunkAuthors authors={authors} team={props.collab.enabled} />}
       </div>
 
       {/* Recursos */}
@@ -944,6 +956,36 @@ function ChunkCard(props: {
           </div>
         </Dialog>
       )}
+    </div>
+  );
+}
+
+/**
+ * "Traducido por maria (v. 1-3) · beto (v. 4-6)". En un proyecto sin equipo solo se
+ * muestra si hay más de una persona en el historial (si no, es ruido).
+ */
+function ChunkAuthors({ authors, team }: { authors: VerseAuthor[]; team: boolean }) {
+  const { t, lang } = useT();
+  const groups = authorGroups(authors);
+  const people = new Set(groups.map((g) => g.author));
+  if (!groups.length || (!team && people.size < 2)) return null;
+  const when = (time: number) => (time ? formatDate(time, lang, "") : t("translate.author_pending"));
+  return (
+    <div className="chunk-authors small muted">
+      <Users size={12} style={{ flex: "none" }} />
+      <span>
+        {t("translate.translated_by")}{" "}
+        {people.size === 1 ? (
+          <span title={when(groups[0].time)}>{groups[0].author}</span>
+        ) : (
+          groups.map((g, i) => (
+            <span key={i} title={when(g.time)}>
+              {i > 0 && " · "}
+              <strong>{g.author}</strong> (v. {g.label})
+            </span>
+          ))
+        )}
+      </span>
     </div>
   );
 }

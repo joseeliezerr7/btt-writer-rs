@@ -164,6 +164,14 @@ export async function mockInvoke<T>(cmd: string, a: Record<string, unknown> = {}
       const data: ChunkData = { text, finished: p.finished.includes(`${s("chapter")}-${s("chunk")}`), expected_verses: expected, issues: p.type === "text" ? validate(text, expected) : [], has_conflict, conflict_options: has_conflict ? [text.split("=======")[0].split("\n").slice(1).join("\n").trim(), text.split("=======")[1].split(">>>>>>>")[0].trim()] : [], conflict_origins: has_conflict ? [{ id: "a1", time: Math.floor(Date.now() / 1000) - 3600, message: "autosave", author: profile.full_name || "Jose" }, { id: "b2", time: Math.floor(Date.now() / 1000) - 86400 * 40, message: "autosave", author: "Juan_HRomeroC" }] : [], helps: p.type !== "text" && text ? (JSON.parse(text) as HelpItem[]) : [] };
       return delay(data) as T;
     }
+    case "chunk_authors": {
+      const p = find(s("id"));
+      const text = p.chunks[`${s("chapter")}/${s("chunk")}`] ?? "";
+      const nums = Array.from(text.matchAll(/\\v\s+(\d+(?:-\d+)?[a-z]?)/g)).map((m) => m[1]);
+      const other = s("chapter") === "01" && s("chunk") === "11";
+      const me = profile.full_name || "Jose";
+      return delay(nums.map((n, i) => ({ verse: n, author: other && i > 0 ? "ana" : me, time: other ? Math.floor(Date.now() / 1000) - 3600 * (i + 1) : 0 }))) as T;
+    }
     case "write_chunk": { const p = find(s("id")); if (s("chapter") === "front") p.title = s("text"); else p.chunks[`${s("chapter")}/${s("chunk")}`] = s("text"); return delay(undefined) as T; }
     case "write_helps": { const p = find(s("id")); const txt = JSON.stringify(a.items); p.chunks[`${s("chapter")}/${s("chunk")}`] = txt; return delay(txt) as T; }
     case "set_chunk_finished": {

@@ -172,6 +172,19 @@ fn is_chunk(path: &str) -> bool {
     path.ends_with(".txt")
 }
 
+/// `01/05.txt` → `1:5`; `01/title.txt` → `1:title`; `front/title.txt` → `front:title`.
+fn chunk_label(path: &str) -> String {
+    let trim0 = |s: &str| {
+        let t = s.trim_start_matches('0');
+        if t.is_empty() && !s.is_empty() { "0".to_string() } else { t.to_string() }
+    };
+    let p = path.trim_end_matches(".txt");
+    match p.split_once('/') {
+        Some((ch, ck)) => format!("{}:{}", trim0(ch), trim0(ck)),
+        None => p.to_string(),
+    }
+}
+
 /// Una pasada completa: guarda, baja y fusiona, y sube si procede. Nunca
 /// descarta trabajo local: `pull` hace commit y rama de respaldo antes de fusionar.
 pub fn sync(root: &Path, url: &str, creds: Option<&Credentials>, author: &Author, opts: &SyncOptions) -> SyncReport {
@@ -189,9 +202,22 @@ pub fn sync(root: &Path, url: &str, creds: Option<&Credentials>, author: &Author
     }
     // Los chunks que se cerraron se comparan con lo que llegó del servidor mientras
     // estaban retenidos: si ambos cambiaron queda un único conflicto para resolver.
+    let closed: Vec<String> = crate::hold::paths(root).into_iter().filter(|p| Some(p) != held.as_ref()).collect();
     report.changed = crate::hold::close_all(root, held.as_deref());
+    // El commit de un chunk cerrado dice quién y qué ("maria: 1:5"), legible en el
+    // historial de WACS; y quien aporta queda en los traductores del manifiesto.
+    let message = if closed.is_empty() {
+        gitrepo::AUTOSAVE_MESSAGE.to_string()
+    } else {
+        if let Ok(mut p) = crate::project::Project::open(root) {
+            p.manifest.add_translator(&author.name);
+            let _ = p.save_manifest();
+        }
+        let who = if opts.user.is_empty() { author.name.as_str() } else { opts.user.as_str() };
+        format!("{who}: {}", closed.iter().map(|p| chunk_label(p)).collect::<Vec<_>>().join(", "))
+    };
     // Primero el commit de lo propio: así `changed` solo recoge lo que vino del servidor.
-    if let Err(e) = gitrepo::commit_all(root, author, gitrepo::AUTOSAVE_MESSAGE) {
+    if let Err(e) = gitrepo::commit_all(root, author, &message) {
         report.error = Some(e.to_string());
         report.claims = active(root, now);
         return report;
@@ -387,6 +413,13 @@ mod tests {
         let r = sync(&b.root, &url, Some(&creds()), &author("beto"), &opts("beto", None));
         assert_eq!(r.changed, vec!["01/01.txt"]);
         assert_eq!(b.read_chunk("01", "01").unwrap(), "\\v 1 Ana escribiendo");
+        // El commit de cierre dice quién y qué, y Ana queda como traductora del proyecto.
+        let h = gitrepo::file_history(&b.root, "01/01.txt").unwrap();
+        assert_eq!(h[0].message, "ana: 1:1");
+        assert_eq!(h[0].author, "ana");
+        assert!(Project::open(&b.root).unwrap().manifest.translators.contains(&"ana".to_string()));
+        // Quien lo recibe por fusión no figura como autor de ese chunk.
+        assert!(h.iter().all(|c| c.author == "ana"), "{h:?}");
     }
 
     #[test]

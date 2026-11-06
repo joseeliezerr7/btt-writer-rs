@@ -478,6 +478,8 @@ input[type="checkbox"] { accent-color: var(--primary); }
 .search-bar .input { min-height: 34px; padding-top: .35rem; padding-bottom: .35rem; }
 mark { background: #ffe58a; color: inherit; border-radius: 2px; }
 .issue-text { font-size: .84rem; color: var(--warning); margin-top: .5rem; display: flex; gap: .4rem; align-items: flex-start; }
+.chunk-authors { margin-top: .55rem; padding-top: .45rem; border-top: 1px dashed var(--border); display: flex; gap: .4rem; align-items: center; line-height: 1.4; }
+.chunk-authors strong { font-weight: 600; color: var(--text); }
 .save-state { font-size: .74rem; color: var(--muted); display: inline-flex; align-items: center; gap: .25rem; }
 
 /* ------------------------------------------------------------------ responsive */

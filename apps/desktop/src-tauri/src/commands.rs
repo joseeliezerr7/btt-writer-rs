@@ -766,6 +766,17 @@ async fn chunk_history(app: tauri::AppHandle, id: String, chapter: String, chunk
 }).await
 }
 
+/// Quién escribió cada versículo del chunk, según el historial git (ver `btt_core::authorship`).
+#[tauri::command]
+async fn chunk_authors(app: tauri::AppHandle, id: String, chapter: String, chunk: String) -> R<Vec<btt_core::authorship::VerseAuthor>> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
+    let current = p.read_chunk(&chapter, &chunk).unwrap_or_default();
+    let me = st.author().name;
+    Ok(btt_core::authorship::verse_authors(&p.root, &format!("{chapter}/{chunk}.txt"), &current, &me))
+}).await
+}
+
 /// Versiones distintas de un chunk, la más reciente primero (ver `chunk_history`).
 fn history_entries(p: &Project, chapter: &str, chunk: &str) -> R<Vec<HistoryEntry>> {
     let file = format!("{chapter}/{chunk}.txt");
@@ -1702,6 +1713,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool {
         validate_project,
         commit_project,
         chunk_history,
+        chunk_authors,
         chunk_at_commit,
         restore_chunk,
         search_project,

@@ -1,6 +1,7 @@
 // Pruebas de los segmentos y del movimiento de marcadores por posición (editor con fichas).
 import assert from "node:assert/strict";
 import { findVerse, moveVerseTo, removeVerse, segment } from "../src/components/verse-markers.ts";
+import { authorGroups } from "../src/components/authors.ts";
 
 assert.deepEqual(segment("\\v 1 Hola \\v 2 mundo"), [
   { kind: "marker", n: "1", raw: "\\v 1 " },
@@ -31,3 +32,14 @@ assert.equal(moveVerseTo("Hola mundo \\v 2 fin", "2", 6).text, "Hola \\v 2 mundo
 assert.equal(moveVerseTo("Hola", "3", 4).text, "Hola \\v 3 ");
 
 console.log("editor.test.ts ok");
+
+// Agrupación de la autoría por versículo en tramos.
+
+assert.deepEqual(
+  authorGroups([
+    { verse: "1", author: "ana", time: 10 }, { verse: "2", author: "ana", time: 20 }, { verse: "3", author: "ana", time: 5 },
+    { verse: "4-5", author: "beto", time: 7 }, { verse: "6", author: "ana", time: 0 },
+  ]),
+  [{ author: "ana", label: "1-3", time: 20 }, { author: "beto", label: "4-5", time: 7 }, { author: "ana", label: "6", time: 0 }],
+);
+console.log("authors ok");

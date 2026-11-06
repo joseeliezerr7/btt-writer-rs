@@ -217,8 +217,10 @@ pub fn file_history(path: &Path, file: &str) -> Result<Vec<Commit>> {
     for oid in walk {
         let commit = repo.find_commit(oid?)?;
         let mine = blob_of(&commit);
-        let parent_blob = commit.parent(0).ok().and_then(|p| blob_of(&p));
-        if mine.is_some() && mine != parent_blob {
+        // Una fusión que solo trae la versión de otra persona no cambia el archivo:
+        // el autor sigue siendo quien lo escribió, no quien fusionó.
+        let same_as_a_parent = commit.parents().any(|p| blob_of(&p) == mine);
+        if mine.is_some() && !same_as_a_parent {
             out.push(Commit {
                 id: commit.id().to_string(),
                 time: commit.time().seconds(),

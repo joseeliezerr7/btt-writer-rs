@@ -397,6 +397,12 @@ export interface Commit {
   message: string;
 }
 /** Versión guardada de un chunk (historial). */
+export interface VerseAuthor {
+  verse: string;
+  author: string;
+  /** Fecha del commit; 0 si aún no está confirmado. */
+  time: number;
+}
 export interface HistoryEntry extends Commit {
   author: string;
   /** Fragmento del texto de esa versión. */
@@ -461,6 +467,8 @@ export const api = {
   validateProject: (id: string) => call<ChunkValidation[]>("validate_project", { id }),
   commitProject: (id: string) => call<string | null>("commit_project", { id }),
   chunkHistory: (id: string, chapter: string, chunk: string) => call<HistoryEntry[]>("chunk_history", { id, chapter, chunk }),
+  /** Quién escribió por última vez cada versículo (según el historial git). */
+  chunkAuthors: (id: string, chapter: string, chunk: string) => call<VerseAuthor[]>("chunk_authors", { id, chapter, chunk }),
   chunkAtCommit: (id: string, commit: string, chapter: string, chunk: string) => call<string>("chunk_at_commit", { id, commit, chapter, chunk }),
   /** Vuelve a una versión anterior (queda registrada como restauración) y devuelve el texto. */
   restoreChunk: (id: string, commit: string, chapter: string, chunk: string) => call<string>("restore_chunk", { id, commit, chapter, chunk }),

@@ -22,6 +22,7 @@
 //! * [`appdata`]    — rutas, ajustes, perfil y migración.
 
 pub mod appdata;
+pub mod authorship;
 pub mod backup;
 pub mod collab;
 pub mod conflicts;
