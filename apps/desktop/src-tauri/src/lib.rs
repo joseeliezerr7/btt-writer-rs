@@ -30,6 +30,8 @@ pub struct AppState {
     pub collab: Mutex<HashMap<String, collab::CollabConfig>>,
     /// Proyectos con una sincronización en curso.
     pub collab_running: Mutex<HashSet<String>>,
+    /// Predicción de palabras por idioma meta (id de idioma → índice); se vacía al guardar un chunk.
+    pub predict: Mutex<HashMap<String, commands::PredictCache>>,
     pub device_name: String,
 }
 
@@ -167,6 +169,7 @@ pub fn run() {
                 backup_running: Mutex::new(()),
                 collab: Mutex::new(collab_cfg),
                 collab_running: Mutex::new(HashSet::new()),
+                predict: Mutex::new(HashMap::new()),
                 device_name: device_name(),
             };
             app.manage(state);

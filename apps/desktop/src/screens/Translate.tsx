@@ -889,6 +889,7 @@ function ChunkCard(props: {
                 placeholder={placeholder}
                 onChange={save}
                 onFocus={() => { if (!props.review && !editing) { setEditing(true); void beginCollab(false); } }}
+                predict={(prev, prefix) => api.predictWords(id, prev, prefix)}
               />
             )}
           </>

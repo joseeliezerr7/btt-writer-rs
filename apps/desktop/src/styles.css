@@ -480,6 +480,11 @@ mark { background: #ffe58a; color: inherit; border-radius: 2px; }
 .issue-text { font-size: .84rem; color: var(--warning); margin-top: .5rem; display: flex; gap: .4rem; align-items: flex-start; }
 .chunk-authors { margin-top: .55rem; padding-top: .45rem; border-top: 1px dashed var(--border); display: flex; gap: .4rem; align-items: center; line-height: 1.4; }
 .chunk-authors strong { font-weight: 600; color: var(--text); }
+/* Palabras sugeridas mientras se escribe (como la barra del teclado del teléfono). */
+.predict-bar { display: flex; flex-wrap: wrap; gap: .35rem; }
+.predict-chip { border: 1px solid var(--border); background: var(--primary-soft); color: var(--text); border-radius: 999px; padding: .22rem .75rem; font-family: var(--font-text); font-size: calc(var(--size-target) * .9); line-height: 1.3; cursor: pointer; }
+.predict-chip:first-child { font-weight: 600; border-color: var(--primary); }
+.predict-chip:hover, .predict-chip:focus-visible { color: var(--primary); border-color: var(--primary); }
 .save-state { font-size: .74rem; color: var(--muted); display: inline-flex; align-items: center; gap: .25rem; }
 
 /* ------------------------------------------------------------------ responsive */

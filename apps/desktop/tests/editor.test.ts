@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { findVerse, moveVerseTo, removeVerse, segment } from "../src/components/verse-markers.ts";
 import { authorGroups } from "../src/components/authors.ts";
+import { applySuggestion, suggestWords, tokens, wordAtCaret } from "../src/components/predict.ts";
 
 assert.deepEqual(segment("\\v 1 Hola \\v 2 mundo"), [
   { kind: "marker", n: "1", raw: "\\v 1 " },
@@ -43,3 +44,23 @@ assert.deepEqual(
   [{ author: "ana", label: "1-3", time: 20 }, { author: "beto", label: "4-5", time: 7 }, { author: "ana", label: "6", time: 0 }],
 );
 console.log("authors ok");
+
+// Predicción de palabras: la palabra bajo el cursor, la anterior y cómo completarla.
+
+assert.deepEqual(wordAtCaret("\\v 1 Dijo el ho", 15), { start: 13, prefix: "ho", prev: "el" });
+// Tras un punto, la palabra anterior ya no cuenta.
+assert.deepEqual(wordAtCaret("Hola. Ho", 8), { start: 6, prefix: "Ho", prev: null });
+// Un marcador entre medias se salta.
+assert.deepEqual(wordAtCaret("Dijo \\v 2 ho", 12), { start: 10, prefix: "ho", prev: "Dijo" });
+// En medio de una palabra, con pocas letras o dentro de un marcador no hay sugerencia.
+assert.equal(wordAtCaret("Hola", 2), null);
+assert.equal(wordAtCaret("h", 1), null);
+assert.equal(wordAtCaret("\\v", 2), null);
+assert.deepEqual(applySuggestion("Dijo el ho", 8, 10, "hombre"), { text: "Dijo el hombre ", caret: 15 });
+assert.deepEqual(applySuggestion("ho mundo", 0, 2, "hola"), { text: "hola mundo", caret: 5 });
+assert.deepEqual(tokens("\\v 1 Ho'ñiꞌ dios, ¿ko-ta? \\f + \\ft nota\\f* \\v 2 Dios 3."), ["Ho'ñiꞌ", "dios", "ko-ta", "Dios"]);
+const corpus = ["\\v 1 Hola mundo. Hola tierra.", "\\v 2 Hombre bueno, el hombre malo. Honra a tu padre."];
+assert.deepEqual(suggestWords(corpus, null, "Ho").map((s) => s.word), ["Hola", "Hombre"]);
+assert.equal(suggestWords(corpus, "el", "ho")[0].word, "hombre");
+assert.deepEqual(suggestWords(corpus, null, "hola"), []);
+console.log("predict ok");

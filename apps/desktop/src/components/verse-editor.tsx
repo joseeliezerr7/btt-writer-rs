@@ -3,7 +3,9 @@
 // arrastran a otra palabra, o a la barra de versículos para quitarlas. El DOM
 // se construye a mano para no pelear con React mientras el usuario escribe.
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ClipboardEvent, type DragEvent, type KeyboardEvent, type MouseEvent } from "react";
+import type { Suggestion } from "../api";
 import { useT } from "../i18n";
+import { applySuggestion, wordAtCaret } from "./predict";
 import { insertMarkerAt, moveVerseTo, normalizeVerseMarkers, segment } from "./verse-markers";
 
 /** Etiqueta del versículo que se arrastra desde dentro del editor. */
@@ -22,6 +24,8 @@ interface Props {
   placeholder: string;
   onChange: (text: string) => void;
   onFocus?: () => void;
+  /** Palabras del idioma que completan lo tecleado (`prev` es la palabra anterior). */
+  predict?: (prev: string | null, prefix: string) => Promise<Suggestion[]>;
 }
 
 const MARKER_CLASS = "ve-marker";
@@ -137,12 +141,52 @@ function caretFromPoint(root: HTMLElement, x: number, y: number): number {
   return walk(root).text.length;
 }
 
-export const VerseEditor = forwardRef<VerseEditorHandle, Props>(function VerseEditor({ text, rtl, placeholder, onChange, onFocus }, ref) {
+export const VerseEditor = forwardRef<VerseEditorHandle, Props>(function VerseEditor({ text, rtl, placeholder, onChange, onFocus, predict }, ref) {
   const { t } = useT();
   const root = useRef<HTMLDivElement>(null);
   const composing = useRef(false);
   const [picked, setPicked] = useState<string | null>(null);
   const [over, setOver] = useState(false);
+  // Sugerencias para la palabra a medio escribir y el tramo del texto que sustituyen.
+  const [sugg, setSugg] = useState<Suggestion[]>([]);
+  const suggRange = useRef<{ start: number; end: number } | null>(null);
+  const predictSeq = useRef(0);
+  const predictTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const clearSugg = () => {
+    predictSeq.current++;
+    if (predictTimer.current) clearTimeout(predictTimer.current);
+    suggRange.current = null;
+    setSugg((s) => (s.length ? [] : s));
+  };
+
+  /** Pide sugerencias para la palabra bajo el cursor (con una pequeña espera tras la tecla). */
+  const refreshPredict = (value: string, caret: number | null) => {
+    if (!predict) return;
+    const w = caret === null ? null : wordAtCaret(value, caret);
+    if (!w) { clearSugg(); return; }
+    const seq = ++predictSeq.current;
+    if (predictTimer.current) clearTimeout(predictTimer.current);
+    predictTimer.current = setTimeout(async () => {
+      const s = await predict(w.prev, w.prefix).catch(() => [] as Suggestion[]);
+      if (seq !== predictSeq.current) return;
+      suggRange.current = { start: w.start, end: caret as number };
+      setSugg(s);
+    }, 120);
+  };
+
+  /** Completa la palabra tecleada con `word` y deja el cursor tras ella. */
+  const accept = (word: string) => {
+    const el = root.current;
+    const r = suggRange.current;
+    if (!el || !r) return;
+    const res = applySuggestion(walk(el).text, r.start, r.end, word);
+    el.focus();
+    build(el, res.text, picked);
+    placeCaret(el, res.caret);
+    clearSugg();
+    onChange(res.text);
+  };
 
   const currentCaret = (): number | null => {
     const el = root.current;
@@ -193,10 +237,27 @@ export const VerseEditor = forwardRef<VerseEditorHandle, Props>(function VerseEd
     const typedMarker = Array.from(el.childNodes).some((n) => n.nodeType === Node.TEXT_NODE && /\\v\s*\d+[a-z]?(?:-\d+[a-z]?)?\s/.test(n.nodeValue ?? ""));
     if (typedMarker || fixed.text !== raw) rebuild(fixed.text, fixed.caret);
     onChange(fixed.text);
+    refreshPredict(fixed.text, fixed.caret);
   };
 
   const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key === "Escape" && picked) setPicked(null);
+    if (e.key === "Tab" && sugg.length && !e.shiftKey) {
+      e.preventDefault();
+      accept(sugg[0].word);
+      return;
+    }
+    if (e.key === "Escape") {
+      if (sugg.length) clearSugg();
+      if (picked) setPicked(null);
+    }
+  };
+
+  // Mover el cursor con las flechas o un toque cambia la palabra bajo él.
+  const onKeyUp = (e: KeyboardEvent) => {
+    if (/^(Arrow|Home$|End$|Page)/.test(e.key)) {
+      const el = root.current;
+      if (el) refreshPredict(walk(el).text, currentCaret());
+    }
   };
 
   const onPaste = (e: ClipboardEvent) => {
@@ -274,11 +335,31 @@ export const VerseEditor = forwardRef<VerseEditorHandle, Props>(function VerseEd
       const pos = currentCaret();
       if (pos !== null) apply(moveVerseTo(walk(el).text, picked, pos));
       else setPicked(null);
+      return;
     }
+    refreshPredict(walk(el).text, currentCaret());
   };
 
   return (
     <div className="col" style={{ flex: 1, gap: ".3rem" }}>
+      {sugg.length > 0 && (
+        <div className={"predict-bar" + (rtl ? " rtl" : "")} role="listbox">
+          {sugg.map((s) => (
+            <button
+              key={s.word}
+              type="button"
+              className="predict-chip"
+              title={t("translate.predict_accept", { word: s.word })}
+              // Que el toque no quite el foco al editor (y el cursor siga donde estaba).
+              onPointerDown={(e) => e.preventDefault()}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => accept(s.word)}
+            >
+              {s.word}
+            </button>
+          ))}
+        </div>
+      )}
       <div
         ref={root}
         className={"editor verse-editor target-text" + (rtl ? " rtl" : "") + (over ? " drop-over" : "")}
@@ -289,6 +370,7 @@ export const VerseEditor = forwardRef<VerseEditorHandle, Props>(function VerseEd
         data-placeholder={placeholder}
         onInput={onInput}
         onKeyDown={onKeyDown}
+        onKeyUp={onKeyUp}
         onPaste={onPaste}
         onFocus={onFocus}
         onCompositionStart={() => { composing.current = true; }}

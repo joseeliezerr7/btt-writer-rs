@@ -649,6 +649,10 @@ async fn read_chunk(app: tauri::AppHandle, id: String, chapter: String, chunk: S
 async fn write_chunk(app: tauri::AppHandle, id: String, chapter: String, chunk: String, text: String) -> R<()> {
     blocking(app, move |st| {
     let p = open_project(st, &id)?;
+    // Lo escrito alimenta la predicción de palabras: el índice del idioma se rehace al pedirlo.
+    if let Some(c) = st.predict.lock().unwrap().get_mut(&p.manifest.target_language.id) {
+        c.dirty = true;
+    }
     if text.trim().is_empty() && chunk != "title" && chunk != "reference" {
         // Igual que la app original: texto vacío borra el archivo.
         p.delete_chunk(&chapter, &chunk).map_err(err)
@@ -656,6 +660,34 @@ async fn write_chunk(app: tauri::AppHandle, id: String, chapter: String, chunk: 
         p.write_chunk(&chapter, &chunk, &text).map_err(err)
     }
 }).await
+}
+
+/// Índice de predicción de un idioma. Tras guardar un chunk queda `dirty` y se
+/// rehace en la siguiente petición, como mucho una vez cada pocos segundos.
+pub struct PredictCache {
+    pub index: btt_core::predict::Index,
+    pub dirty: bool,
+    pub built_at: std::time::Instant,
+}
+
+/// Palabras del idioma meta que completan `prefix`, favoreciendo las que suelen seguir a `prev`.
+#[tauri::command]
+async fn predict_words(app: tauri::AppHandle, id: String, prev: Option<String>, prefix: String) -> R<Vec<btt_core::predict::Suggestion>> {
+    blocking(app, move |st| {
+        let p = open_project(st, &id)?;
+        let lang = p.manifest.target_language.id.clone();
+        let mut cache = st.predict.lock().unwrap();
+        let rebuild = match cache.get(&lang) {
+            None => true,
+            Some(c) => c.dirty && c.built_at.elapsed() > std::time::Duration::from_secs(3),
+        };
+        if rebuild {
+            let index = btt_core::predict::Index::for_language(&st.paths.translations(), &lang);
+            cache.insert(lang.clone(), PredictCache { index, dirty: false, built_at: std::time::Instant::now() });
+        }
+        Ok(cache.get(&lang).map(|c| c.index.suggest(prev.as_deref(), &prefix, 5)).unwrap_or_default())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1714,6 +1746,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool {
         commit_project,
         chunk_history,
         chunk_authors,
+        predict_words,
         chunk_at_commit,
         restore_chunk,
         search_project,

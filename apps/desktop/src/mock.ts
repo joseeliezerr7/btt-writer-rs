@@ -1,6 +1,7 @@
 // Backend simulado para abrir la interfaz en un navegador normal (sin Tauri).
 // Solo se usa cuando no existe el puente IPC; permite probar las pantallas.
 import type { ChunkData, HelpItem, Issue } from "./api";
+import { suggestWords } from "./components/predict";
 
 const languages = [
   { slug: "es-419", name: "Español Latinoamericano", anglicized_name: "Spanish", direction: "ltr", region: "Americas", is_gateway_language: true, temporary: false },
@@ -171,6 +172,11 @@ export async function mockInvoke<T>(cmd: string, a: Record<string, unknown> = {}
       const other = s("chapter") === "01" && s("chunk") === "11";
       const me = profile.full_name || "Jose";
       return delay(nums.map((n, i) => ({ verse: n, author: other && i > 0 ? "ana" : me, time: other ? Math.floor(Date.now() / 1000) - 3600 * (i + 1) : 0 }))) as T;
+    }
+    case "predict_words": {
+      const p = find(s("id"));
+      const texts = projects.filter((q) => q.type === "text" && q.language.slug === p.language.slug).flatMap((q) => Object.values(q.chunks));
+      return delay(suggestWords(texts, (a.prev as string | null) ?? null, s("prefix"))) as T;
     }
     case "write_chunk": { const p = find(s("id")); if (s("chapter") === "front") p.title = s("text"); else p.chunks[`${s("chapter")}/${s("chunk")}`] = s("text"); return delay(undefined) as T; }
     case "write_helps": { const p = find(s("id")); const txt = JSON.stringify(a.items); p.chunks[`${s("chapter")}/${s("chunk")}`] = txt; return delay(txt) as T; }

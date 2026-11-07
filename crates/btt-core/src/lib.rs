@@ -29,6 +29,7 @@ pub mod conflicts;
 pub mod error;
 pub mod gitrepo;
 pub mod hold;
+pub mod predict;
 pub mod library;
 pub mod manifest;
 pub mod print;

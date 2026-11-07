@@ -397,6 +397,11 @@ export interface Commit {
   message: string;
 }
 /** Versión guardada de un chunk (historial). */
+export interface Suggestion {
+  word: string;
+  count: number;
+}
+
 export interface VerseAuthor {
   verse: string;
   author: string;
@@ -469,6 +474,7 @@ export const api = {
   chunkHistory: (id: string, chapter: string, chunk: string) => call<HistoryEntry[]>("chunk_history", { id, chapter, chunk }),
   /** Quién escribió por última vez cada versículo (según el historial git). */
   chunkAuthors: (id: string, chapter: string, chunk: string) => call<VerseAuthor[]>("chunk_authors", { id, chapter, chunk }),
+  predictWords: (id: string, prev: string | null, prefix: string) => call<Suggestion[]>("predict_words", { id, prev, prefix }),
   chunkAtCommit: (id: string, commit: string, chapter: string, chunk: string) => call<string>("chunk_at_commit", { id, commit, chapter, chunk }),
   /** Vuelve a una versión anterior (queda registrada como restauración) y devuelve el texto. */
   restoreChunk: (id: string, commit: string, chapter: string, chunk: string) => call<string>("restore_chunk", { id, commit, chapter, chunk }),
