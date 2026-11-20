@@ -247,6 +247,55 @@ pub fn file_history(path: &Path, file: &str) -> Result<Vec<Commit>> {
     Ok(out)
 }
 
+/// Historial de todos los archivos de una carpeta (`01`) en un solo recorrido: para
+/// cada archivo, los commits que lo cambiaron, el más reciente primero (mismo
+/// criterio que `file_history`). Un commit cuyo árbol de la carpeta coincide con el
+/// de algún padre se salta entero, así que los miles de autoguardados que no
+/// tocaron el capítulo cuestan una comparación de ids cada uno.
+pub fn dir_history(path: &Path, dir: &str) -> Result<std::collections::BTreeMap<String, Vec<Commit>>> {
+    use std::collections::{BTreeMap, HashMap};
+    let repo = open_or_init(path)?;
+    let mut out: BTreeMap<String, Vec<Commit>> = BTreeMap::new();
+    if head_commit(&repo).is_none() {
+        return Ok(out);
+    }
+    let mut walk = repo.revwalk()?;
+    walk.push_head()?;
+    walk.set_sorting(git2::Sort::TIME)?;
+    let subtree = |c: &git2::Commit| -> Option<git2::Tree<'_>> {
+        let entry = c.tree().ok()?.get_path(Path::new(dir)).ok()?;
+        repo.find_tree(entry.id()).ok()
+    };
+    let blobs = |t: &git2::Tree<'_>| -> HashMap<String, Oid> {
+        t.iter().filter_map(|e| e.name().map(|n| (n.to_string(), e.id()))).collect()
+    };
+    for oid in walk {
+        let commit = repo.find_commit(oid?)?;
+        let Some(mine) = subtree(&commit) else { continue };
+        let parents: Vec<Option<git2::Tree<'_>>> = commit.parents().map(|p| subtree(&p)).collect();
+        if parents.iter().any(|p| p.as_ref().map(|t| t.id()) == Some(mine.id())) {
+            continue;
+        }
+        let parent_blobs: Vec<HashMap<String, Oid>> = parents.iter().map(|p| p.as_ref().map(&blobs).unwrap_or_default()).collect();
+        let info = Commit {
+            id: commit.id().to_string(),
+            time: commit.time().seconds(),
+            message: commit.summary().unwrap_or("").to_string(),
+            author: commit.author().name().unwrap_or("").to_string(),
+        };
+        for (name, id) in blobs(&mine) {
+            if !name.ends_with(".txt") {
+                continue;
+            }
+            if parent_blobs.iter().any(|pb| pb.get(&name) == Some(&id)) {
+                continue;
+            }
+            out.entry(format!("{dir}/{name}")).or_default().push(info.clone());
+        }
+    }
+    Ok(out)
+}
+
 /// Para cada versión de un conflicto, el commit más reciente en el que el archivo
 /// tenía exactamente ese contenido (autor y fecha de esa versión). `None` si no
 /// aparece en el historial (p. ej. texto nunca guardado por separado).

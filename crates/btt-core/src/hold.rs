@@ -72,14 +72,23 @@ pub fn start(root: &Path, path: &str, now: u64) -> Result<()> {
 }
 
 /// Resultado de cerrar una retención.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Closed {
-    /// El archivo se queda como está (nadie más lo tocó, o no hubo cambios locales).
-    Unchanged,
+    /// No hubo cambios locales y el servidor tampoco lo tocó (o no estaba retenido).
+    Kept,
+    /// Se escribió aquí y el servidor no lo tocó: entra en el siguiente commit (una traducción).
+    Shared,
     /// No se editó localmente y el servidor sí lo cambió: se adoptó la versión del servidor.
     TookTheirs,
     /// Ambos lo cambiaron: el archivo quedó con las dos versiones para elegir.
     Conflict,
+}
+
+impl Closed {
+    /// El archivo en disco cambió al cerrar (hay que recargarlo en pantalla).
+    pub fn rewrote_file(self) -> bool {
+        matches!(self, Closed::TookTheirs | Closed::Conflict)
+    }
 }
 
 fn norm(s: &str) -> String {
@@ -88,70 +97,74 @@ fn norm(s: &str) -> String {
 
 /// Cierra la retención de `path` y compara con lo que llegó del servidor mientras
 /// tanto. Toma el candado del proyecto para no cruzarse con una escritura del editor.
+/// La retención solo se quita cuando el archivo ya quedó escrito: si la escritura
+/// falla, el chunk sigue retenido y se vuelve a intentar en la siguiente pasada.
 pub fn close(root: &Path, path: &str) -> Result<Closed> {
     let _guard = crate::project::lock_project(root);
     let mut holds = list(root);
-    let Some(hold) = holds.remove(path) else { return Ok(Closed::Unchanged) };
-    save(root, &holds)?;
-    let head_id = gitrepo::head_blob_id(root, path);
-    if head_id == hold.base {
-        // El servidor no lo tocó: se sube tal cual en el siguiente commit.
-        return Ok(Closed::Unchanged);
-    }
+    let Some(hold) = holds.get(path).cloned() else { return Ok(Closed::Kept) };
     let full = root.join(path);
     let ours = std::fs::read_to_string(&full).ok();
-    let theirs = head_id.as_deref().and_then(|id| gitrepo::blob_by_id(root, id));
     let base = hold.base.as_deref().and_then(|id| gitrepo::blob_by_id(root, id));
     let local_changed = match (&ours, &base) {
-        (None, _) => false,
+        (None, None) => false,
+        (None, Some(_)) => true, // se borró el chunk (texto vacío)
         (Some(o), None) => !norm(o).is_empty(),
         (Some(o), Some(b)) => norm(o) != norm(b),
     };
-    match (local_changed, theirs) {
-        (false, Some(t)) => {
-            if ours.as_deref().map(norm) != Some(norm(&t)) {
+    let head_id = gitrepo::head_blob_id(root, path);
+    let theirs = if head_id == hold.base { None } else { head_id.as_deref().and_then(|id| gitrepo::blob_by_id(root, id)) };
+    let server_changed = head_id != hold.base;
+    let outcome = match (local_changed, server_changed, theirs) {
+        (false, false, _) => Closed::Kept,
+        (true, false, _) => Closed::Shared,
+        // El servidor lo borró: sin cambios locales no hay nada que adoptar; con ellos se conserva lo local.
+        (false, true, None) => Closed::Kept,
+        (true, true, None) => Closed::Shared,
+        (false, true, Some(t)) => {
+            if ours.as_deref().map(norm) == Some(norm(&t)) {
+                Closed::Kept
+            } else {
                 crate::project::atomic_write(&full, &t)?;
-                return Ok(Closed::TookTheirs);
+                Closed::TookTheirs
             }
-            Ok(Closed::Unchanged)
         }
-        (false, None) => Ok(Closed::Unchanged),
-        (true, Some(t)) => {
+        (true, true, Some(t)) => {
             let o = ours.unwrap_or_default();
             if norm(&o) == norm(&t) {
-                return Ok(Closed::Unchanged);
+                Closed::Kept
+            } else {
+                let text = format!(
+                    "{}HEAD\n{}\n{}\n{}\n{}servidor\n",
+                    crate::conflicts::START,
+                    o.trim_end_matches(['\n', '\r']),
+                    crate::conflicts::SEP,
+                    t.trim_end_matches(['\n', '\r']),
+                    crate::conflicts::END
+                );
+                crate::project::atomic_write(&full, &text)?;
+                Closed::Conflict
             }
-            let text = format!(
-                "{}HEAD\n{}\n{}\n{}\n{}servidor\n",
-                crate::conflicts::START,
-                o.trim_end_matches(['\n', '\r']),
-                crate::conflicts::SEP,
-                t.trim_end_matches(['\n', '\r']),
-                crate::conflicts::END
-            );
-            crate::project::atomic_write(&full, &text)?;
-            Ok(Closed::Conflict)
         }
-        // El servidor lo borró y aquí se escribió: se conserva lo local.
-        (true, None) => Ok(Closed::Unchanged),
-    }
+    };
+    holds.remove(path);
+    save(root, &holds)?;
+    Ok(outcome)
 }
 
 /// Cierra todas las retenciones salvo `except` (el chunk que sigue en edición).
-/// Devuelve los archivos que cambiaron en disco (versión del servidor o conflicto).
-pub fn close_all(root: &Path, except: Option<&str>) -> Vec<String> {
-    let mut changed = vec![];
+/// Devuelve cada chunk cerrado con su resultado; los que fallaron siguen retenidos.
+pub fn close_all(root: &Path, except: Option<&str>) -> Vec<(String, Closed)> {
+    let mut out = vec![];
     for path in paths(root) {
         if Some(path.as_str()) == except {
             continue;
         }
-        match close(root, &path) {
-            Ok(Closed::Unchanged) => {}
-            Ok(_) => changed.push(path),
-            Err(_) => {}
+        if let Ok(c) = close(root, &path) {
+            out.push((path, c));
         }
     }
-    changed
+    out
 }
 
 /// Olvida todas las retenciones sin comprobar nada (al desactivar el equipo tras cerrarlas).
@@ -183,10 +196,30 @@ mod tests {
         assert_eq!(gitrepo::file_at(&root, &c, "01/01.txt").unwrap(), "base");
         assert_eq!(gitrepo::file_at(&root, &c, "01/02.txt").unwrap(), "otro");
         // Al cerrar sin que el servidor lo tocara, el siguiente commit lo incluye.
-        assert_eq!(close(&root, "01/01.txt").unwrap(), Closed::Unchanged);
+        assert_eq!(close(&root, "01/01.txt").unwrap(), Closed::Shared);
         let c = commit_all(&root, &Author::new("a", "a@x"), AUTOSAVE_MESSAGE).unwrap().unwrap();
         assert_eq!(gitrepo::file_at(&root, &c, "01/01.txt").unwrap(), "escribiendo");
         assert!(list(&root).is_empty());
+        // Cerrar sin haber escrito ni recibido nada: no es una traducción.
+        start(&root, "01/01.txt", 20).unwrap();
+        assert_eq!(close(&root, "01/01.txt").unwrap(), Closed::Kept);
+    }
+
+    #[test]
+    fn si_no_se_puede_escribir_el_chunk_sigue_retenido() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = repo(tmp.path());
+        start(&root, "01/01.txt", 10).unwrap();
+        let holds = list(&root);
+        clear(&root).unwrap();
+        std::fs::write(root.join("01/01.txt"), "del servidor").unwrap();
+        commit_all(&root, &Author::new("b", "b@x"), AUTOSAVE_MESSAGE).unwrap();
+        save(&root, &holds).unwrap();
+        // El archivo del chunk pasa a ser una carpeta: la escritura de la versión del servidor falla.
+        std::fs::remove_file(root.join("01/01.txt")).unwrap();
+        std::fs::create_dir(root.join("01/01.txt")).unwrap();
+        assert!(close(&root, "01/01.txt").is_err());
+        assert_eq!(list(&root).len(), 1, "la retención se conserva para reintentar");
     }
 
     #[test]

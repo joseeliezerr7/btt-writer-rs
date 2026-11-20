@@ -56,6 +56,9 @@ assert.deepEqual(wordAtCaret("Dijo \\v 2 ho", 12), { start: 10, prefix: "ho", pr
 assert.equal(wordAtCaret("Hola", 2), null);
 assert.equal(wordAtCaret("h", 1), null);
 assert.equal(wordAtCaret("\\v", 2), null);
+// Letras fuera del plano básico (Adlam, dos unidades UTF-16 cada una) cuentan como letras.
+assert.deepEqual(wordAtCaret("𞤀𞤤", 4), { start: 0, prefix: "𞤀𞤤", prev: null });
+assert.equal(wordAtCaret("𞤀𞤤", 2), null);
 assert.deepEqual(applySuggestion("Dijo el ho", 8, 10, "hombre"), { text: "Dijo el hombre ", caret: 15 });
 assert.deepEqual(applySuggestion("ho mundo", 0, 2, "hola"), { text: "hola mundo", caret: 5 });
 assert.deepEqual(tokens("\\v 1 Ho'ñiꞌ dios, ¿ko-ta? \\f + \\ft nota\\f* \\v 2 Dios 3."), ["Ho'ñiꞌ", "dios", "ko-ta", "Dios"]);

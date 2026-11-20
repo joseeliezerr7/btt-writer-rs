@@ -33,6 +33,26 @@ fn verses(text: &str) -> Vec<(String, String)> {
 /// `current` es el texto actual del archivo: si difiere de la última versión
 /// confirmada, lo distinto se atribuye a `me` con fecha 0.
 pub fn verse_authors(root: &Path, file: &str, current: &str, me: &str) -> Vec<VerseAuthor> {
+    let history = gitrepo::file_history(root, file).unwrap_or_default();
+    from_history(root, file, &history, current, me)
+}
+
+/// Lo mismo para todos los chunks de un capítulo con un solo recorrido del
+/// historial (ver `gitrepo::dir_history`). `currents`: chunk → texto actual.
+pub fn chapter_authors(root: &Path, chapter: &str, currents: &BTreeMap<String, String>, me: &str) -> BTreeMap<String, Vec<VerseAuthor>> {
+    let histories = gitrepo::dir_history(root, chapter).unwrap_or_default();
+    currents
+        .iter()
+        .map(|(chunk, current)| {
+            let file = format!("{chapter}/{chunk}.txt");
+            let history = histories.get(&file).cloned().unwrap_or_default();
+            (chunk.clone(), from_history(root, &file, &history, current, me))
+        })
+        .collect()
+}
+
+/// `history` va de la más reciente a la más antigua (como la devuelve git).
+fn from_history(root: &Path, file: &str, history: &[gitrepo::Commit], current: &str, me: &str) -> Vec<VerseAuthor> {
     let mut by_verse: BTreeMap<String, (String, i64)> = BTreeMap::new();
     let mut prev: BTreeMap<String, String> = BTreeMap::new();
     let mut apply = |text: &str, author: &str, time: i64| {
@@ -47,9 +67,7 @@ pub fn verse_authors(root: &Path, file: &str, current: &str, me: &str) -> Vec<Ve
         }
         prev = now;
     };
-    let mut history = gitrepo::file_history(root, file).unwrap_or_default();
-    history.reverse();
-    for c in history {
+    for c in history.iter().rev() {
         if let Ok(text) = gitrepo::file_at(root, &c.id, file) {
             apply(&text, &c.author, c.time);
         }
@@ -94,5 +112,11 @@ mod tests {
         assert_eq!(got[3].author, "yo");
         assert_eq!(got[3].time, 0);
         assert_eq!(got[4].author, "beto");
+
+        // Por capítulo (un solo recorrido) sale lo mismo que chunk a chunk.
+        let mut currents = BTreeMap::new();
+        currents.insert("01".to_string(), current.clone());
+        let by_chapter = chapter_authors(root, "01", &currents, "yo");
+        assert_eq!(by_chapter["01"], verse_authors(root, "01/01.txt", &current, "yo"));
     }
 }

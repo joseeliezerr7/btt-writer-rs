@@ -225,14 +225,13 @@ pub fn sync(root: &Path, url: &str, creds: Option<&Credentials>, author: &Author
     }
     // Los chunks que se cerraron se comparan con lo que llegó del servidor mientras
     // estaban retenidos: si ambos cambiaron queda un único conflicto para resolver.
-    let closed: Vec<String> = crate::hold::paths(root).into_iter().filter(|p| Some(p) != held.as_ref()).collect();
-    report.changed = crate::hold::close_all(root, held.as_deref());
-    // El commit de un chunk cerrado dice quién y qué ("maria: 1:5"), legible en el
-    // historial de WACS; y quien aporta queda en los traductores del manifiesto.
+    let closed_all = crate::hold::close_all(root, held.as_deref());
+    report.changed = closed_all.iter().filter(|(_, c)| c.rewrote_file()).map(|(p, _)| p.clone()).collect();
+    // Solo lo escrito aquí y sin conflicto es una traducción: el commit dice quién y
+    // qué ("maria: 1:5"), legible en WACS, y quien aporta queda en los traductores.
+    let closed: Vec<String> = closed_all.into_iter().filter(|(_, c)| *c == crate::hold::Closed::Shared).map(|(p, _)| p).collect();
     let who = if opts.user.is_empty() { author.name.as_str() } else { opts.user.as_str() };
     let dirty: Vec<String> = gitrepo::dirty_files(root).unwrap_or_default().into_iter().filter(|p| Some(p) != held.as_ref()).collect();
-    // Cerrar un chunk sin haberlo tocado no es una traducción: no cuenta como cierre.
-    let closed: Vec<String> = closed.into_iter().filter(|p| dirty.contains(p)).collect();
     let message = if !closed.is_empty() {
         if let Ok(mut p) = crate::project::Project::open(root) {
             p.manifest.add_translator(&author.name);

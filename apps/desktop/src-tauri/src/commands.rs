@@ -477,6 +477,7 @@ async fn delete_project(app: tauri::AppHandle, id: String) -> R<String> {
     let dest = st.paths.backups().join(format!("{id}.{stamp}.tstudio"));
     let backup = btt_core::tstudio::export(&[&p], &dest, &st.author(), btt_core::VERSION).map_err(err)?;
     p.delete().map_err(err)?;
+    st.forget_predictions();
     let mut s = st.settings.lock().unwrap_or_else(|e| e.into_inner());
     if s.last_project == id {
         s.last_project.clear();
@@ -649,9 +650,9 @@ async fn read_chunk(app: tauri::AppHandle, id: String, chapter: String, chunk: S
 async fn write_chunk(app: tauri::AppHandle, id: String, chapter: String, chunk: String, text: String) -> R<()> {
     blocking(app, move |st| {
     let p = open_project(st, &id)?;
-    // Lo escrito alimenta la predicción de palabras: el índice del idioma se rehace al pedirlo.
-    if let Some(c) = st.predict.lock().unwrap().get_mut(&p.manifest.target_language.id) {
-        c.dirty = true;
+    // Lo escrito alimenta la predicción de palabras: se reemplazan solo las de este chunk.
+    if let Some(ix) = st.predict.lock().unwrap_or_else(|e| e.into_inner()).get_mut(&p.manifest.target_language.id) {
+        ix.set_chunk(&btt_core::predict::Index::chunk_key(&id, &chapter, &chunk), &text);
     }
     if text.trim().is_empty() && chunk != "title" && chunk != "reference" {
         // Igual que la app original: texto vacío borra el archivo.
@@ -662,30 +663,21 @@ async fn write_chunk(app: tauri::AppHandle, id: String, chapter: String, chunk: 
 }).await
 }
 
-/// Índice de predicción de un idioma. Tras guardar un chunk queda `dirty` y se
-/// rehace en la siguiente petición, como mucho una vez cada pocos segundos.
-pub struct PredictCache {
-    pub index: btt_core::predict::Index,
-    pub dirty: bool,
-    pub built_at: std::time::Instant,
-}
-
 /// Palabras del idioma meta que completan `prefix`, favoreciendo las que suelen seguir a `prev`.
+/// El índice del idioma se construye la primera vez (fuera del candado, para no frenar
+/// el guardado) y después se mantiene chunk a chunk desde `write_chunk`.
 #[tauri::command]
 async fn predict_words(app: tauri::AppHandle, id: String, prev: Option<String>, prefix: String) -> R<Vec<btt_core::predict::Suggestion>> {
     blocking(app, move |st| {
         let p = open_project(st, &id)?;
         let lang = p.manifest.target_language.id.clone();
-        let mut cache = st.predict.lock().unwrap();
-        let rebuild = match cache.get(&lang) {
-            None => true,
-            Some(c) => c.dirty && c.built_at.elapsed() > std::time::Duration::from_secs(3),
-        };
-        if rebuild {
+        let have = st.predict.lock().unwrap_or_else(|e| e.into_inner()).contains_key(&lang);
+        if !have {
             let index = btt_core::predict::Index::for_language(&st.paths.translations(), &lang);
-            cache.insert(lang.clone(), PredictCache { index, dirty: false, built_at: std::time::Instant::now() });
+            st.predict.lock().unwrap_or_else(|e| e.into_inner()).entry(lang.clone()).or_insert(index);
         }
-        Ok(cache.get(&lang).map(|c| c.index.suggest(prev.as_deref(), &prefix, 5)).unwrap_or_default())
+        let cache = st.predict.lock().unwrap_or_else(|e| e.into_inner());
+        Ok(cache.get(&lang).map(|ix| ix.suggest(prev.as_deref(), &prefix, 5)).unwrap_or_default())
     })
     .await
 }
@@ -798,14 +790,18 @@ async fn chunk_history(app: tauri::AppHandle, id: String, chapter: String, chunk
 }).await
 }
 
-/// Quién escribió cada versículo del chunk, según el historial git (ver `btt_core::authorship`).
+/// Quién escribió cada versículo de cada chunk del capítulo, según el historial git
+/// (ver `btt_core::authorship`): un solo recorrido para todas las tarjetas.
 #[tauri::command]
-async fn chunk_authors(app: tauri::AppHandle, id: String, chapter: String, chunk: String) -> R<Vec<btt_core::authorship::VerseAuthor>> {
+async fn chapter_authors(app: tauri::AppHandle, id: String, chapter: String) -> R<std::collections::BTreeMap<String, Vec<btt_core::authorship::VerseAuthor>>> {
     blocking(app, move |st| {
     let p = open_project(st, &id)?;
-    let current = p.read_chunk(&chapter, &chunk).unwrap_or_default();
+    let mut currents = std::collections::BTreeMap::new();
+    for c in p.chunks(&chapter).map_err(err)? {
+        currents.insert(c.clone(), p.read_chunk(&chapter, &c).unwrap_or_default());
+    }
     let me = st.author().name;
-    Ok(btt_core::authorship::verse_authors(&p.root, &format!("{chapter}/{chunk}.txt"), &current, &me))
+    Ok(btt_core::authorship::chapter_authors(&p.root, &chapter, &currents, &me))
 }).await
 }
 
@@ -862,6 +858,7 @@ async fn restore_chunk(app: tauri::AppHandle, id: String, commit: String, chapte
     }
     let short: String = commit.chars().take(7).collect();
     gitrepo::commit_all(&p.root, &st.author(), &format!("restore {short}")).map_err(err)?;
+    st.forget_predictions();
     Ok(text)
 }).await
 }
@@ -1298,6 +1295,7 @@ fn inspect_tstudio(path: String) -> R<btt_core::tstudio::ArchiveManifest> {
 async fn import_tstudio(app: tauri::AppHandle, path: String, mode: ImportMode) -> R<Vec<ImportOutcome>> {
     blocking(app, move |st| {
     let out = btt_core::tstudio::import(Path::new(&path), &st.paths.translations(), mode, &st.author()).map_err(err)?;
+    st.forget_predictions();
     Ok(out)
 }).await
 }
@@ -1371,6 +1369,7 @@ async fn import_usfm(app: tauri::AppHandle, path: String, language: String, book
     let _ = btt_core::project::remove_dir_all_robust(&staging);
     summary.project_id = outcome.id.clone();
     summary.outcome = Some(outcome);
+    st.forget_predictions();
     Ok(summary)
 }).await
 }
@@ -1745,7 +1744,7 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool {
         validate_project,
         commit_project,
         chunk_history,
-        chunk_authors,
+        chapter_authors,
         predict_words,
         chunk_at_commit,
         restore_chunk,

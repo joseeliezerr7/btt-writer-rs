@@ -1,8 +1,11 @@
 // Predicción de palabras en el editor: qué se está tecleando, cómo completarlo
 // y (para la versión web de prueba) un índice igual al de btt-core.
 
-/** Letras, diacríticos y los apóstrofos/guiones que muchas lenguas usan dentro de la palabra. */
-const WORD_CHAR = /[\p{L}\p{M}'’ʼꞌʔ-]/u;
+// Letras, diacríticos y los apóstrofos/guiones que muchas lenguas usan dentro de la palabra.
+// Siempre con expresiones regulares `u` sobre trozos de texto, nunca índice a índice: las letras
+// fuera del plano básico (Adlam, Osage...) ocupan dos unidades UTF-16.
+const WORD_END = /[\p{L}\p{M}'’ʼꞌʔ-]+$/u;
+const WORD_START = /^[\p{L}\p{M}'’ʼꞌʔ-]/u;
 const EDGE = /^['’ʼ-]+|['’ʼ-]+$/g;
 export const MIN_PREFIX = 2;
 export const MIN_COUNT = 2;
@@ -18,16 +21,18 @@ export interface WordAtCaret {
 /** Palabra a medio escribir justo antes del cursor y la que la precede. */
 export function wordAtCaret(text: string, caret: number): WordAtCaret | null {
   // Solo al final de la palabra: en medio de una no se sugiere.
-  if (caret < text.length && WORD_CHAR.test(text[caret])) return null;
-  let start = caret;
-  while (start > 0 && WORD_CHAR.test(text[start - 1])) start--;
+  if (WORD_START.test(text.slice(caret))) return null;
+  const before = text.slice(0, caret);
+  const m = WORD_END.exec(before);
+  if (!m) return null;
+  const prefix = m[0];
+  const start = caret - prefix.length;
   // `\v 3` o `\f` escritos a mano no son palabras.
-  if (start > 0 && text[start - 1] === "\\") return null;
-  const prefix = text.slice(start, caret);
+  if (start > 0 && before[start - 1] === "\\") return null;
   if ([...prefix].length < MIN_PREFIX) return null;
-  const before = text.slice(0, start).replace(/\\[a-z0-9]+\*?\s*/g, " ");
-  const m = /([\p{L}\p{M}'’ʼꞌʔ-]+)([^\p{L}\p{M}]*)$/u.exec(before);
-  const prev = m && !/[.!?;:]/.test(m[2]) ? m[1].replace(EDGE, "") : null;
+  const ctx = before.slice(0, start).replace(/\\[a-z0-9]+\*?\s*/g, " ");
+  const pm = /([\p{L}\p{M}'’ʼꞌʔ-]+)([^\p{L}\p{M}]*)$/u.exec(ctx);
+  const prev = pm && !/[.!?;:]/.test(pm[2]) ? pm[1].replace(EDGE, "") : null;
   return { start, prefix, prev: prev || null };
 }
 

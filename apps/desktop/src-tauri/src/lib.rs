@@ -30,12 +30,19 @@ pub struct AppState {
     pub collab: Mutex<HashMap<String, collab::CollabConfig>>,
     /// Proyectos con una sincronización en curso.
     pub collab_running: Mutex<HashSet<String>>,
-    /// Predicción de palabras por idioma meta (id de idioma → índice); se vacía al guardar un chunk.
-    pub predict: Mutex<HashMap<String, commands::PredictCache>>,
+    /// Predicción de palabras por idioma meta (id de idioma → índice). Se actualiza
+    /// chunk a chunk al guardar y se olvida cuando cambian proyectos enteros.
+    pub predict: Mutex<HashMap<String, btt_core::predict::Index>>,
     pub device_name: String,
 }
 
 impl AppState {
+    /// Olvida los índices de predicción (tras importar, borrar, restaurar o recibir
+    /// cambios del equipo): se rehacen en la siguiente petición.
+    pub fn forget_predictions(&self) {
+        self.predict.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+
     pub fn container(&self, lang: &str, project: &str, resource: &str) -> btt_core::Result<Arc<ResourceContainer>> {
         let slug = btt_core::rc::container_slug(lang, project, resource);
         if let Some(rc) = self.rc_cache.lock().unwrap_or_else(|e| e.into_inner()).get(&slug) {
@@ -173,12 +180,27 @@ pub fn run() {
                 device_name: device_name(),
             };
             app.manage(state);
+            close_orphan_holds(&app.state::<AppState>());
             start_backup_timer(handle);
             Ok(())
         })
         .invoke_handler(commands::handler())
         .run(tauri::generate_context!())
         .expect("error al iniciar BTT Writer");
+}
+
+/// Un chunk retenido solo tiene sentido con el equipo activo. Si quedó alguno de un
+/// proyecto cuyo equipo ya no lo está (configuración borrada fuera de la app), se
+/// cierra al arrancar para que vuelva a entrar en los commits y en el respaldo.
+fn close_orphan_holds(st: &AppState) {
+    for p in btt_core::project::Project::list(&st.paths.translations()).unwrap_or_default() {
+        if btt_core::hold::paths(&p.root).is_empty() {
+            continue;
+        }
+        if collab::active_remote(st, &p.id()).is_none() {
+            btt_core::hold::close_all(&p.root, None);
+        }
+    }
 }
 
 /// Hilo de respaldo automático según el intervalo configurado.

@@ -26,11 +26,14 @@ struct Word {
     forms: HashMap<String, u32>,
 }
 
-/// Índice de un idioma: palabras y qué palabra sigue a cuál.
+/// Índice de un idioma: palabras y qué palabra sigue a cuál. Guarda las palabras de
+/// cada chunk para poder reemplazarlas cuando ese chunk cambia, sin rehacer todo.
 #[derive(Debug, Clone, Default)]
 pub struct Index {
     words: HashMap<String, Word>,
     next: HashMap<String, HashMap<String, u32>>,
+    /// Palabras de cada chunk (`proyecto/capítulo/chunk` → palabras), para restarlas al cambiar.
+    chunks: HashMap<String, Vec<String>>,
     /// Palabras (con repetición) con las que se construyó.
     pub total: usize,
 }
@@ -85,15 +88,13 @@ impl Index {
         Index::default()
     }
 
-    /// Añade el texto de un chunk.
-    pub fn add_text(&mut self, text: &str) {
-        let toks = tokens(text);
+    fn add_tokens(&mut self, toks: &[String]) {
         let mut prev: Option<String> = None;
         for t in toks {
             let key = t.to_lowercase();
             let w = self.words.entry(key.clone()).or_default();
             w.count += 1;
-            *w.forms.entry(t).or_default() += 1;
+            *w.forms.entry(t.clone()).or_default() += 1;
             if let Some(p) = prev {
                 *self.next.entry(p).or_default().entry(key.clone()).or_default() += 1;
             }
@@ -102,14 +103,72 @@ impl Index {
         }
     }
 
+    fn remove_tokens(&mut self, toks: &[String]) {
+        let mut prev: Option<String> = None;
+        for t in toks {
+            let key = t.to_lowercase();
+            if let Some(w) = self.words.get_mut(&key) {
+                w.count = w.count.saturating_sub(1);
+                if let Some(n) = w.forms.get_mut(t) {
+                    *n = n.saturating_sub(1);
+                    if *n == 0 {
+                        w.forms.remove(t);
+                    }
+                }
+                if w.count == 0 {
+                    self.words.remove(&key);
+                }
+            }
+            if let Some(p) = &prev {
+                if let Some(n) = self.next.get_mut(p) {
+                    if let Some(c) = n.get_mut(&key) {
+                        *c = c.saturating_sub(1);
+                        if *c == 0 {
+                            n.remove(&key);
+                        }
+                    }
+                    if n.is_empty() {
+                        self.next.remove(p);
+                    }
+                }
+            }
+            prev = Some(key);
+            self.total = self.total.saturating_sub(1);
+        }
+    }
+
+    /// Añade un texto suelto (sin chunk al que pertenezca).
+    pub fn add_text(&mut self, text: &str) {
+        self.add_tokens(&tokens(text));
+    }
+
+    /// Fija el texto del chunk `key` (`proyecto/capítulo/chunk`): quita lo que tenía
+    /// y añade lo nuevo. Texto vacío = chunk borrado.
+    pub fn set_chunk(&mut self, key: &str, text: &str) {
+        if let Some(old) = self.chunks.remove(key) {
+            self.remove_tokens(&old);
+        }
+        let toks = tokens(text);
+        if !toks.is_empty() {
+            self.add_tokens(&toks);
+            self.chunks.insert(key.to_string(), toks);
+        }
+    }
+
+    /// Clave de un chunk en el índice.
+    pub fn chunk_key(project_id: &str, chapter: &str, chunk: &str) -> String {
+        format!("{project_id}/{chapter}/{chunk}")
+    }
+
     /// Índice con todos los chunks de texto del proyecto (no las notas ni preguntas).
     pub fn add_project(&mut self, p: &Project) {
         if p.manifest.type_.id != "text" {
             return;
         }
+        let id = p.id();
         for c in p.all_chunks().unwrap_or_default() {
             if let Ok(t) = p.read_chunk(&c.chapter, &c.chunk) {
-                self.add_text(&t);
+                self.set_chunk(&Index::chunk_key(&id, &c.chapter, &c.chunk), &t);
             }
         }
     }
@@ -197,6 +256,23 @@ mod tests {
         assert!(ix.suggest(None, "hola", 5).is_empty());
         // Hace falta un mínimo de letras.
         assert!(ix.suggest(None, "h", 5).is_empty());
+    }
+
+    #[test]
+    fn cambiar_un_chunk_resta_sus_palabras_y_suma_las_nuevas() {
+        let mut ix = Index::new();
+        ix.set_chunk("p/01/01", "\\v 1 Hola mundo. Hola cielo.");
+        ix.set_chunk("p/01/02", "\\v 2 Hola otra vez");
+        assert_eq!(ix.suggest(None, "ho", 5)[0].count, 3);
+        // El chunk 1 se reescribe sin "Hola": quedan solo las del chunk 2.
+        ix.set_chunk("p/01/01", "\\v 1 Adiós mundo. Adiós cielo.");
+        assert!(ix.suggest(None, "ho", 5).is_empty(), "una sola 'Hola' ya no alcanza el mínimo");
+        assert_eq!(ix.suggest(None, "ad", 5)[0].word, "Adiós", "solo existe la forma con mayúscula");
+        // Borrado: no queda rastro.
+        ix.set_chunk("p/01/01", "");
+        ix.set_chunk("p/01/02", "");
+        assert_eq!(ix.total, 0);
+        assert!(ix.is_empty());
     }
 
     #[test]

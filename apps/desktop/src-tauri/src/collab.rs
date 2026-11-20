@@ -66,11 +66,6 @@ pub struct CollabStatus {
 
 fn status(st: &AppState, id: &str) -> R<CollabStatus> {
     let p = open_project(st, id)?;
-    if active_remote(st, id).is_none() {
-        // Sin equipo no hay chunks retenidos: si quedó alguno (equipo desactivado a
-        // medias), se cierra para que vuelva a entrar en los commits.
-        btt_core::hold::close_all(&p.root, None);
-    }
     let me = st.profile.lock().unwrap_or_else(|e| e.into_inner()).session.as_ref().map(|s| s.user.username.clone()).unwrap_or_default();
     let syncing = st.collab_running.lock().unwrap_or_else(|e| e.into_inner()).contains(id);
     Ok(CollabStatus {
@@ -244,6 +239,7 @@ pub async fn collab_join(app: tauri::AppHandle, clone_url: String, mode: ImportM
         cfg.last_error.clear();
         set_config(st, &outcome.id, cfg)?;
         st.list_cache.lock().unwrap_or_else(|e| e.into_inner()).remove(&outcome.id);
+        st.forget_predictions();
         Ok(outcome)
     })
     .await
@@ -266,8 +262,10 @@ fn run_sync(st: &AppState, id: &str, root: &std::path::Path, cfg: &CollabConfig,
     if updated != *cfg {
         let _ = set_config(st, id, updated);
     }
-    if !report.changed.is_empty() {
+    if !report.changed.is_empty() || matches!(report.merge, Some(MergeStatus::FastForward) | Some(MergeStatus::Merged)) {
         st.list_cache.lock().unwrap_or_else(|e| e.into_inner()).remove(id);
+        // Lo que escribió el equipo también alimenta la predicción de palabras.
+        st.forget_predictions();
     }
     report
 }

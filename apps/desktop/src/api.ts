@@ -473,7 +473,7 @@ export const api = {
   commitProject: (id: string) => call<string | null>("commit_project", { id }),
   chunkHistory: (id: string, chapter: string, chunk: string) => call<HistoryEntry[]>("chunk_history", { id, chapter, chunk }),
   /** Quién escribió por última vez cada versículo (según el historial git). */
-  chunkAuthors: (id: string, chapter: string, chunk: string) => call<VerseAuthor[]>("chunk_authors", { id, chapter, chunk }),
+  chapterAuthors: (id: string, chapter: string) => call<Record<string, VerseAuthor[]>>("chapter_authors", { id, chapter }),
   predictWords: (id: string, prev: string | null, prefix: string) => call<Suggestion[]>("predict_words", { id, prev, prefix }),
   chunkAtCommit: (id: string, commit: string, chapter: string, chunk: string) => call<string>("chunk_at_commit", { id, commit, chapter, chunk }),
   /** Vuelve a una versión anterior (queda registrada como restauración) y devuelve el texto. */

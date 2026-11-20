@@ -149,7 +149,7 @@ export const VerseEditor = forwardRef<VerseEditorHandle, Props>(function VerseEd
   const [over, setOver] = useState(false);
   // Sugerencias para la palabra a medio escribir y el tramo del texto que sustituyen.
   const [sugg, setSugg] = useState<Suggestion[]>([]);
-  const suggRange = useRef<{ start: number; end: number } | null>(null);
+  const suggRange = useRef<{ start: number; end: number; prefix: string } | null>(null);
   const predictSeq = useRef(0);
   const predictTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -170,7 +170,7 @@ export const VerseEditor = forwardRef<VerseEditorHandle, Props>(function VerseEd
     predictTimer.current = setTimeout(async () => {
       const s = await predict(w.prev, w.prefix).catch(() => [] as Suggestion[]);
       if (seq !== predictSeq.current) return;
-      suggRange.current = { start: w.start, end: caret as number };
+      suggRange.current = { start: w.start, end: caret as number, prefix: w.prefix };
       setSugg(s);
     }, 120);
   };
@@ -180,7 +180,11 @@ export const VerseEditor = forwardRef<VerseEditorHandle, Props>(function VerseEd
     const el = root.current;
     const r = suggRange.current;
     if (!el || !r) return;
-    const res = applySuggestion(walk(el).text, r.start, r.end, word);
+    const cur = walk(el).text;
+    // Si se siguió escribiendo o se movió el cursor después de pedir las fichas, el
+    // tramo ya no corresponde: no se toca el texto.
+    if (currentCaret() !== r.end || cur.slice(r.start, r.end) !== r.prefix) { clearSugg(); return; }
+    const res = applySuggestion(cur, r.start, r.end, word);
     el.focus();
     build(el, res.text, picked);
     placeCaret(el, res.caret);

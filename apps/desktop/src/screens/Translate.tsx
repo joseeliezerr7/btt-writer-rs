@@ -325,6 +325,15 @@ function ChapterView(props: {
   const [sourceChunks, setSourceChunks] = useState<SourceChunkView[] | null>(null);
   const [sourceTitle, setSourceTitle] = useState<{ book: string; chapter: string }>({ book: "", chapter: "" });
   const projectSlug = isTw ? "bible" : detail.manifest.project.id;
+  // Quién escribió cada versículo, para todo el capítulo en una sola consulta (un recorrido
+  // del historial git). Se repite cuando cambia el proyecto (tras "Listo") o llega algo del equipo.
+  const [authors, setAuthors] = useState<Record<string, VerseAuthor[]>>({});
+  useEffect(() => {
+    if (isHelps || chapter.id === "front") { setAuthors({}); return; }
+    let alive = true;
+    api.chapterAuthors(detail.item.id, chapter.id).then((a) => { if (alive) setAuthors(a); }).catch(() => { if (alive) setAuthors({}); });
+    return () => { alive = false; };
+  }, [detail, chapter.id, isHelps, props.remote.tick]);
 
   useEffect(() => {
     if (!source || !source.downloaded || chapter.id === "front" || isTw) {
@@ -405,6 +414,7 @@ function ChapterView(props: {
             onChanged={props.onChanged}
             collab={props.collab}
             remote={props.remote}
+            authors={authors[c.id] ?? []}
           />
         </div>
       ))}
@@ -478,6 +488,8 @@ function ChunkCard(props: {
   onChanged: () => void;
   collab: Collab;
   remote: { tick: number; changed: string[] };
+  /** Quién escribió cada versículo (lo consulta el capítulo de una vez para todas las tarjetas). */
+  authors: VerseAuthor[];
 }) {
   const { t, lang } = useT();
   const fb = useFeedback();
@@ -518,13 +530,7 @@ function ChunkCard(props: {
   // Posición del cursor a restaurar tras una normalización que añadió espacios.
   const caretFix = useRef<number | null>(null);
 
-  // Quién escribió cada versículo (según el historial git); se consulta aparte para no retrasar el texto.
-  const [authors, setAuthors] = useState<VerseAuthor[]>([]);
-  const reload = useCallback(() => api.readChunk(id, chapter, chunk.id).then((d) => {
-    setData(d);
-    setText(d.text);
-    if (!isTitle && !isHelps) api.chunkAuthors(id, chapter, chunk.id).then(setAuthors).catch(() => setAuthors([]));
-  }).catch(fb.error), [id, chapter, chunk.id]);
+  const reload = useCallback(() => api.readChunk(id, chapter, chunk.id).then((d) => { setData(d); setText(d.text); }).catch(fb.error), [id, chapter, chunk.id]);
   useEffect(() => {
     reload();
   }, [reload]);
@@ -902,7 +908,7 @@ function ChunkCard(props: {
         {data && data.issues.length > 0 && props.review && !isTitle && text && !editing && (
           <div className="issue-text"><AlertTriangle size={14} style={{ marginTop: 2, flex: "none" }} /><span>{data.issues.map((i) => issueText(t, i)).join(" ")}</span></div>
         )}
-        {!editing && !data?.has_conflict && <ChunkAuthors authors={authors} team={props.collab.enabled} />}
+        {!editing && !data?.has_conflict && <ChunkAuthors authors={props.authors} team={props.collab.enabled} />}
       </div>
 
       {/* Recursos */}
