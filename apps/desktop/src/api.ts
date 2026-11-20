@@ -72,6 +72,8 @@ export interface ProjectItem {
   progress: number;
   has_conflicts: boolean;
   last_backup: number | null;
+  /** Revisiones MAST que esperan a este usuario. */
+  mast_pending?: number;
 }
 
 export interface ChunkInfo {
@@ -122,6 +124,7 @@ export interface MastStepState { translator?: MastConfirmation; checker?: MastCo
 export interface MastNote { by: string; at: number; step: string; text: string; deleted?: boolean }
 export interface MastChapter { steps: Record<string, MastStepState>; checker?: string; notes?: Record<string, MastNote[]> }
 export interface MastFile { chapters: Record<string, MastChapter> }
+export interface PendingReview { chapter: string; step: MastStep; translator: string; since: number }
 
 export interface ResourceRow {
   language_slug: string;

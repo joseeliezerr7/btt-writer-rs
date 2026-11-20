@@ -494,6 +494,8 @@ mark { background: #ffe58a; color: inherit; border-radius: 2px; }
 .mast-step.waiting .n { background: var(--warn, #c77700); color: #fff; }
 .mast-step.current { border-color: var(--primary); color: var(--primary); background: var(--primary-soft); }
 .mast-step.selected { box-shadow: 0 0 0 2px var(--primary-soft), 0 0 0 3px var(--primary); }
+.mast-step.locked { opacity: .5; cursor: not-allowed; }
+.mast-pending { border-color: var(--warn, #c77700); }
 .mast-panel { margin: .6rem .9rem 0; padding: .8rem 1rem; border: 1px solid var(--border); border-radius: 12px; background: var(--card); display: flex; flex-direction: column; gap: .5rem; }
 .mast-panel h3 { margin: 0; display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
 .mast-panel .guide { margin: 0; line-height: 1.5; }

@@ -184,6 +184,8 @@ pub struct ProjectListItem {
     progress: f32,
     has_conflicts: bool,
     last_backup: Option<u64>,
+    /// Revisiones MAST que esperan a este usuario (solo en proyectos MAST).
+    mast_pending: usize,
 }
 
 /// Total de tarjetas del proyecto y cuántas están terminadas. Cuenta exactamente
@@ -213,7 +215,8 @@ fn list_item(st: &AppState, p: &Project) -> ProjectListItem {
     summary.finished_chunks = finished;
     let progress = if total == 0 { 0.0 } else { (finished as f32 / total as f32).min(1.0) };
     let last_backup = st.backup_state.lock().unwrap_or_else(|e| e.into_inner()).last_time.get(&summary.id).copied();
-    ProjectListItem { summary, total_chunks: total, progress, has_conflicts: scan.has_conflicts, last_backup }
+    let mast_pending = if p.manifest.translation_mode == "mast" { btt_core::mast::load(&p.root).pending_for(&mast_user(st)).len() } else { 0 };
+    ProjectListItem { summary, total_chunks: total, progress, has_conflicts: scan.has_conflicts, last_backup, mast_pending }
 }
 
 #[tauri::command]
@@ -814,6 +817,12 @@ async fn set_project_mode(app: tauri::AppHandle, id: String, mode: String) -> R<
 }).await
 }
 
+/// Con quién se firman confirmaciones y notas MAST: el usuario de WACS si hay sesión
+/// (así el revisor asignado por nombre de usuario coincide), si no el nombre del perfil.
+pub(crate) fn mast_user(st: &AppState) -> String {
+    credentials(st).map(|(_, u)| u).unwrap_or_else(|_| st.author().name)
+}
+
 /// Progreso de los 8 pasos MAST del proyecto (por capítulo).
 #[tauri::command]
 async fn mast_status(app: tauri::AppHandle, id: String) -> R<btt_core::mast::MastFile> {
@@ -831,7 +840,7 @@ async fn mast_confirm(app: tauri::AppHandle, id: String, chapter: String, step: 
         return Err(format!("paso desconocido: {step}"));
     }
     let p = open_project(st, &id)?;
-    let me = st.author().name;
+    let me = mast_user(st);
     btt_core::mast::confirm(&p.root, &chapter, &step, role, &me, on, now()).map_err(err)
 }).await
 }
@@ -848,7 +857,7 @@ async fn mast_set_checker(app: tauri::AppHandle, id: String, chapter: String, ch
 async fn mast_add_note(app: tauri::AppHandle, id: String, chapter: String, chunk: String, step: String, text: String) -> R<btt_core::mast::MastFile> {
     blocking(app, move |st| {
     let p = open_project(st, &id)?;
-    let me = st.author().name;
+    let me = mast_user(st);
     btt_core::mast::add_note(&p.root, &chapter, &chunk, &step, &me, &text, now()).map_err(err)
 }).await
 }
@@ -857,7 +866,7 @@ async fn mast_add_note(app: tauri::AppHandle, id: String, chapter: String, chunk
 async fn mast_remove_note(app: tauri::AppHandle, id: String, chapter: String, chunk: String, at: u64) -> R<btt_core::mast::MastFile> {
     blocking(app, move |st| {
     let p = open_project(st, &id)?;
-    let me = st.author().name;
+    let me = mast_user(st);
     btt_core::mast::remove_note(&p.root, &chapter, &chunk, &me, at).map_err(err)
 }).await
 }

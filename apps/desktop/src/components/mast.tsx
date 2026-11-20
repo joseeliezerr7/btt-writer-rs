@@ -3,7 +3,7 @@
 // El progreso viene de `mast.json` (ver btt_core::mast) y lo maneja Translate.
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, ChevronLeft, ChevronRight, Clock, MessageSquare, Trash2, Users } from "lucide-react";
-import { MAST_STEPS, mastNeedsChecker, type ChunkInfo, type MastConfirmation, type MastFile, type MastNote, type MastStep, type MastStepState } from "../api";
+import { MAST_STEPS, mastNeedsChecker, type ChunkInfo, type MastConfirmation, type MastFile, type MastNote, type MastStep, type MastStepState, type PendingReview } from "../api";
 import { useT } from "../i18n";
 import { Button } from "./ui";
 import { ago } from "./collab";
@@ -30,16 +30,37 @@ export function currentStep(file: MastFile | null, chapter: string): MastStep {
   return MAST_STEPS.find((s) => stepStatus(stepState(file, chapter, s), s) !== "passed") ?? "markers";
 }
 
+export const sameUser = (a: string | undefined, b: string | undefined) => !!a && !!b && a.toLowerCase() === b.toLowerCase();
+
+/** Revisiones que esperan a `me` como revisor asignado (todos los capítulos). */
+export function pendingFor(file: MastFile | null, me: string): PendingReview[] {
+  if (!file || !me) return [];
+  const out: PendingReview[] = [];
+  for (const [chapter, ch] of Object.entries(file.chapters)) {
+    if (!sameUser(ch.checker, me)) continue;
+    for (const s of MAST_STEPS) {
+      if (!mastNeedsChecker(s)) continue;
+      const st = ch.steps[s];
+      const tr = confirmedBy(st?.translator);
+      if (tr && !confirmedBy(st?.checker)) out.push({ chapter, step: s, translator: tr.by, since: tr.at });
+    }
+  }
+  return out;
+}
+
+/** Los pasos van en orden: solo se puede entrar hasta el primero sin terminar. */
 export function MastStepBar({ file, chapter, selected, onSelect }: { file: MastFile | null; chapter: string; selected: MastStep; onSelect: (s: MastStep) => void }) {
   const { t } = useT();
   const cur = currentStep(file, chapter);
+  const reach = MAST_STEPS.indexOf(cur);
   return (
     <div className="mast-steps" role="tablist">
       {MAST_STEPS.map((s, i) => {
         const status = stepStatus(stepState(file, chapter, s), s);
-        const label = status === "passed" ? t("mast.status.passed") : status === "waiting" ? t("mast.status.waiting") : s === cur ? t("mast.status.in_progress") : t("mast.status.not_started");
+        const locked = i > reach;
+        const label = locked ? t("mast.locked") : status === "passed" ? t("mast.status.passed") : status === "waiting" ? t("mast.status.waiting") : s === cur ? t("mast.status.in_progress") : t("mast.status.not_started");
         return (
-          <button key={s} type="button" role="tab" aria-selected={s === selected} title={label} className={"mast-step " + status + (s === cur ? " current" : "") + (s === selected ? " selected" : "")} onClick={() => onSelect(s)}>
+          <button key={s} type="button" role="tab" aria-selected={s === selected} disabled={locked} title={label} className={"mast-step " + status + (s === cur ? " current" : "") + (s === selected ? " selected" : "") + (locked ? " locked" : "")} onClick={() => onSelect(s)}>
             <span className="n">{status === "passed" ? <Check size={11} /> : i + 1}</span>
             {t(`mast.step.${s}`)}
           </button>
@@ -53,6 +74,10 @@ export function MastStepPanel(props: {
   step: MastStep;
   state: MastStepState;
   checker: string;
+  /** Quién usa la app (usuario de WACS si hay sesión). */
+  me: string;
+  /** Compañeros del equipo para elegir revisor; `null` cuando no hay equipo (se escribe el nombre). */
+  members: string[] | null;
   onChecker: (name: string) => void;
   onConfirm: (role: "translator" | "checker", on: boolean) => void;
   onPrev?: () => void;
@@ -67,16 +92,21 @@ export function MastStepPanel(props: {
   useEffect(() => setChecker(props.checker), [props.checker]);
   const time = t(`mast.time.${step}`);
   const asksChecker = step === "verbalize" || mastNeedsChecker(step);
-  const confirmed = (c: { by: string; at: number } | undefined, role: "translator" | "checker", label: string) =>
+  // Si el revisor asignado soy yo, veo el panel como revisor: confirmo la revisión, no el paso.
+  const iAmChecker = sameUser(props.checker, props.me);
+  const tConf = confirmedBy(state.translator);
+  const cConf = confirmedBy(state.checker);
+  const confirmed = (c: MastConfirmation | undefined, role: "translator" | "checker", label: string, canAct: boolean, enabled = true) =>
     c ? (
       <span className="row" style={{ gap: ".4rem" }}>
         <span className="badge ok"><Check size={11} /> {label}</span>
         <span className="small muted">{t("mast.confirmed_by", { user: c.by, ago: ago(c.at, t) })}</span>
-        <Button size="sm" variant="ghost" disabled={props.busy} onClick={() => props.onConfirm(role, false)}>{t("mast.undo")}</Button>
+        {canAct && <Button size="sm" variant="ghost" disabled={props.busy} onClick={() => props.onConfirm(role, false)}>{t("mast.undo")}</Button>}
       </span>
-    ) : (
-      <Button size="sm" variant={role === "translator" ? "primary" : "ghost"} busy={props.busy} onClick={() => props.onConfirm(role, true)}><Check size={14} /> {label}</Button>
-    );
+    ) : canAct ? (
+      <Button size="sm" variant={role === "translator" || iAmChecker ? "primary" : "ghost"} busy={props.busy} disabled={!enabled} onClick={() => props.onConfirm(role, true)}><Check size={14} /> {label}</Button>
+    ) : null;
+  const options = props.members ? Array.from(new Set([...props.members, props.checker].filter((m) => m && !sameUser(m, props.me)))) : null;
   return (
     <div className="mast-panel">
       <h3>
@@ -88,20 +118,55 @@ export function MastStepPanel(props: {
       {step === "key_words" && <p className="guide small muted">{t("mast.keyword_hint")}</p>}
       {step === "blind_draft" && <p className="guide small muted">{t("mast.blind_writing")}</p>}
       {props.children}
+      {iAmChecker && <p className="guide small muted">{t("mast.checker_readonly")}</p>}
       {asksChecker && (
         <label className="row" style={{ gap: ".5rem", flexWrap: "wrap" }}>
           <span className="small muted row" style={{ gap: ".3rem" }}><Users size={13} /> {t("mast.checker")}</span>
-          <input className="input" style={{ maxWidth: 260 }} value={checker} placeholder={t("mast.checker_hint")} onChange={(e) => setChecker(e.target.value)} onBlur={() => { if (checker.trim() !== props.checker) props.onChecker(checker); }} />
+          {options ? (
+            <select className="select" style={{ width: "auto", minWidth: 200 }} value={props.checker} title={t("mast.pick_checker")} onChange={(e) => props.onChecker(e.target.value)}>
+              <option value="">{t("mast.no_checker")}</option>
+              {options.map((m) => <option key={m} value={m}>{m}</option>)}
+            </select>
+          ) : (
+            <input className="input" style={{ maxWidth: 260 }} value={checker} placeholder={t("mast.checker_hint")} onChange={(e) => setChecker(e.target.value)} onBlur={() => { if (checker.trim() !== props.checker) props.onChecker(checker); }} />
+          )}
         </label>
       )}
       <div className="mast-confirm">
-        {confirmed(confirmedBy(state.translator), "translator", t("mast.confirm_translator"))}
-        {mastNeedsChecker(step) && confirmed(confirmedBy(state.checker), "checker", t("mast.confirm_checker"))}
+        {iAmChecker ? (
+          <>
+            {tConf ? confirmed(tConf, "translator", t("mast.confirm_translator"), false) : <span className="small muted">{t("mast.waiting_translator")}</span>}
+            {mastNeedsChecker(step) && confirmed(cConf, "checker", t("mast.confirm_checker"), true, !!tConf)}
+          </>
+        ) : (
+          <>
+            {confirmed(tConf, "translator", t("mast.confirm_translator"), true)}
+            {mastNeedsChecker(step) && (props.checker ? (cConf ? confirmed(cConf, "checker", t("mast.confirm_checker"), false) : <span className="small muted">{t("mast.waiting_checker", { user: props.checker })}</span>) : confirmed(cConf, "checker", t("mast.confirm_checker"), true))}
+          </>
+        )}
         {props.team && <span className="small muted">{t("mast.team_hint")}</span>}
         <span className="grow" />
         {props.onPrev && <Button size="sm" variant="ghost" onClick={props.onPrev}><ChevronLeft size={14} /> {t("mast.prev")}</Button>}
         {props.onNext && <Button size="sm" variant="ghost" onClick={props.onNext}>{t("mast.next")} <ChevronRight size={14} /></Button>}
       </div>
+    </div>
+  );
+}
+
+/** Aviso para el revisor: capítulos y pasos que esperan su revisión. */
+export function MastPendingBanner({ pending, onGo }: { pending: PendingReview[]; onGo: (chapter: string) => void }) {
+  const { t } = useT();
+  if (!pending.length) return null;
+  return (
+    <div className="mast-panel mast-pending">
+      <strong className="row" style={{ gap: ".4rem" }}><MessageSquare size={14} /> {t("mast.pending_title")}</strong>
+      {pending.map((p) => (
+        <div key={p.chapter + p.step} className="row" style={{ gap: ".5rem", flexWrap: "wrap" }}>
+          <span className="small">{t("mast.pending_item", { user: p.translator, step: t(`mast.step.${p.step}`), chapter: p.chapter.replace(/^0+/, "") })}</span>
+          <span className="small muted">{ago(p.since, t)}</span>
+          <Button size="sm" onClick={() => onGo(p.chapter)}>{t("mast.go")} <ChevronRight size={13} /></Button>
+        </div>
+      ))}
     </div>
   );
 }

@@ -109,6 +109,42 @@ pub struct MastFile {
     pub chapters: BTreeMap<String, ChapterProgress>,
 }
 
+/// Una revisión que espera al revisor asignado.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PendingReview {
+    pub chapter: String,
+    pub step: String,
+    /// Quien terminó su parte y espera.
+    pub translator: String,
+    pub since: u64,
+}
+
+fn same_user(a: &str, b: &str) -> bool {
+    !a.is_empty() && a.eq_ignore_ascii_case(b)
+}
+
+impl MastFile {
+    /// Pasos con revisor en los que `user` es el revisor del capítulo, quien traduce
+    /// ya confirmó y la revisión sigue pendiente. En orden de capítulo.
+    pub fn pending_for(&self, user: &str) -> Vec<PendingReview> {
+        let mut out = vec![];
+        for (chapter, ch) in &self.chapters {
+            if !same_user(&ch.checker, user) {
+                continue;
+            }
+            for step in STEPS.iter().filter(|s| needs_checker(s)) {
+                if let Some(st) = ch.steps.get(*step) {
+                    if active(&st.translator) && !active(&st.checker) {
+                        let t = st.translator.as_ref().unwrap();
+                        out.push(PendingReview { chapter: chapter.clone(), step: step.to_string(), translator: t.by.clone(), since: t.at });
+                    }
+                }
+            }
+        }
+        out
+    }
+}
+
 fn parse(text: &str) -> Option<MastFile> {
     serde_json::from_str(text).ok()
 }
@@ -143,10 +179,9 @@ pub fn confirm(root: &Path, chapter: &str, step: &str, role: Role, user: &str, o
     // Nunca se retrocede en el tiempo: una confirmación recibida del equipo con
     // fecha posterior (reloj adelantado) no se pisa con una más antigua.
     let at = slot.as_ref().map(|c| c.at + 1).unwrap_or(0).max(now);
+    // El revisor del capítulo solo se asigna a propósito (`set_checker`): quien confirma
+    // la revisión sin estar asignado (trabajo sin equipo) no queda atado al papel de revisor.
     *slot = Some(Confirmation { by: user.to_string(), at, undone: !on });
-    if role == Role::Checker && on && ch.checker.is_empty() {
-        ch.checker = user.to_string();
-    }
     save(root, &f)?;
     Ok(f)
 }
@@ -262,7 +297,8 @@ mod tests {
         let f = confirm(root, "01", "peer_edit", Role::Checker, "beto", true, 30).unwrap();
         let ch = &f.chapters["01"];
         assert_eq!(ch.steps["peer_edit"].status("peer_edit"), "passed");
-        assert_eq!(ch.checker, "beto", "el primer revisor que confirma queda asignado");
+        assert_eq!(ch.steps["peer_edit"].checker.as_ref().unwrap().by, "beto");
+        assert!(ch.checker.is_empty(), "confirmar como revisor no asigna el papel de revisor");
 
         // Deshacer deja una lápida con fecha: el paso vuelve a estar pendiente.
         let f = confirm(root, "01", "consume", Role::Translator, "ana", false, 40).unwrap();
@@ -278,6 +314,23 @@ mod tests {
         // Confirmar de nuevo con un reloj atrasado no retrocede la fecha.
         let f = confirm(root, "01", "consume", Role::Translator, "ana", true, 5).unwrap();
         assert!(f.chapters["01"].steps["consume"].translator.as_ref().unwrap().at > 40);
+    }
+
+    #[test]
+    fn el_revisor_asignado_ve_sus_revisiones_pendientes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        set_checker(root, "01", "Juan_H").unwrap();
+        confirm(root, "01", "peer_edit", Role::Translator, "ana", true, 10).unwrap();
+        let f = confirm(root, "01", "key_words", Role::Translator, "ana", true, 11).unwrap();
+        // Sin distinguir mayúsculas (los nombres de WACS llegan como los escribió cada uno).
+        let p = f.pending_for("juan_h");
+        assert_eq!(p.iter().map(|p| p.step.as_str()).collect::<Vec<_>>(), vec!["peer_edit", "key_words"]);
+        assert_eq!(p[0].translator, "ana");
+        assert!(f.pending_for("ana").is_empty());
+        // Al revisar, desaparece de la lista.
+        let f = confirm(root, "01", "peer_edit", Role::Checker, "Juan_H", true, 20).unwrap();
+        assert_eq!(f.pending_for("Juan_H").len(), 1);
     }
 
     #[test]

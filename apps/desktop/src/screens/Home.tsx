@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { AlertTriangle, Archive, BookOpen, CheckCircle2, CheckSquare, ChevronDown, ChevronRight, Cloud, CloudOff, Download, ExternalLink, FolderClosed, FolderInput, FolderOpen, Info, Layers, LogOut, MessageSquare, MoreVertical, Pencil, Plus, RefreshCw, Search, Settings as SettingsIcon, Square, Trash2, UserRound, Users, X } from "lucide-react";
+import { AlertTriangle, Archive, BookOpen, CheckCircle2, CheckSquare, ChevronDown, ChevronRight, Cloud, CloudOff, Download, ExternalLink, FolderClosed, FolderInput, FolderOpen, Info, Layers, ListChecks, LogOut, MessageSquare, MoreVertical, Pencil, Plus, RefreshCw, Search, Settings as SettingsIcon, Square, Trash2, UserRound, Users, X } from "lucide-react";
 import { api, isTauri, resourceLabel, type ProjectItem, type ProjectRow } from "../api";
 import { useApp } from "../app-context";
 import { formatDate, useT } from "../i18n";
@@ -241,6 +241,7 @@ export default function HomeScreen() {
             <span className="pct" style={{ color: pct >= 100 ? "var(--success)" : undefined }}>{pct}%</span>
           </div>
           {p.has_conflicts && <span title={t("home.conflicts")} className="badge danger"><AlertTriangle size={12} /></span>}
+          {!!p.mast_pending && <span title={t("home.pending_reviews", { n: p.mast_pending })} className="badge warn"><ListChecks size={12} /> {p.mast_pending}</span>}
           {collabIds.has(p.id) && <span title={t("collab.in_team")} className="badge accent"><Users size={12} /></span>}
         </div>
         <div onClick={(e) => e.stopPropagation()}>

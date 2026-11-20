@@ -29,7 +29,7 @@ import { insertMarkerAt, MARKER_MIME, normalizeVerseMarkers, removeMarker, Verse
 import { VerseEditor, VERSE_MIME, type VerseEditorHandle } from "../components/verse-editor";
 import { removeVerse } from "../components/verse-markers";
 import { authorGroups } from "../components/authors";
-import { currentStep, MastChunkList, MastNotes, MastStepBar, MastStepPanel, stepState } from "../components/mast";
+import { currentStep, MastChunkList, MastNotes, MastPendingBanner, MastStepBar, MastStepPanel, pendingFor, sameUser, stepState, stepStatus } from "../components/mast";
 
 /** Lista numerada de la verificación previa a marcar un chunk como terminado. */
 function Checklist({ t }: { t: (k: string) => string }) {
@@ -54,6 +54,8 @@ interface MastCtx {
   step: MastStep;
   notes: Record<string, MastNote[]>;
   me: string;
+  /** Soy el revisor del capítulo: dejo notas, no edito el texto. */
+  readOnly: boolean;
   onAddNote: (chunk: string, text: string) => void;
   onRemoveNote: (chunk: string, at: number) => void;
 }
@@ -168,7 +170,9 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
   if (!detail) return <div className="screen"><Spinner /></div>;
 
   const conflictCount = chapters.reduce((n, c) => n + c.chunks.filter((k) => k.has_conflict).length, 0);
+  // Un proyecto MAST se trabaja solo por el recorrido de pasos: no hay lectura ni revisión sueltas.
   const mastProject = detail.manifest.translation_mode === "mast" && !isHelps;
+  const viewMode: Mode = mastProject ? "mast" : mode;
   const jumpToConflict = () => {
     setMode("review");
     const c = chapters.find((x) => x.chunks.some((k) => k.has_conflict));
@@ -184,14 +188,14 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
         <Logo size={34} className="logo" />
         <button className="nav-btn" title={t("translate.home")} onClick={() => navigate({ name: "home" })}><Home size={19} /><span>{t("translate.home")}</span></button>
         <span className="sep" />
-        {mastProject && <button className={"nav-btn" + (mode === "mast" ? " active" : "")} title={t("translate.mast")} onClick={() => setMode("mast")}><ListOrdered size={19} /><span>{t("mode.mast")}</span></button>}
-        {!isHelps && (
+        {mastProject && <button className="nav-btn active" title={t("translate.mast")} onClick={() => setMode("mast")}><ListOrdered size={19} /><span>{t("mode.mast")}</span></button>}
+        {!isHelps && !mastProject && (
           <>
             <button className={"nav-btn" + (mode === "read" ? " active" : "")} title={t("translate.read")} onClick={() => setMode("read")}><BookOpen size={19} /><span>{t("mode.read")}</span></button>
-            {!mastProject && <button className={"nav-btn" + (mode === "chunk" ? " active" : "")} title={t("translate.chunk")} onClick={() => setMode("chunk")}><LayoutList size={19} /><span>{t("mode.chunk")}</span></button>}
+            <button className={"nav-btn" + (mode === "chunk" ? " active" : "")} title={t("translate.chunk")} onClick={() => setMode("chunk")}><LayoutList size={19} /><span>{t("mode.chunk")}</span></button>
           </>
         )}
-        <button className={"nav-btn" + (mode === "review" ? " active" : "")} title={t("translate.review")} onClick={() => setMode("review")}><ListChecks size={19} /><span>{t("mode.review")}</span></button>
+        {!mastProject && <button className={"nav-btn" + (mode === "review" ? " active" : "")} title={t("translate.review")} onClick={() => setMode("review")}><ListChecks size={19} /><span>{t("mode.review")}</span></button>}
         {conflictCount > 0 && <button className="nav-btn danger" title={t("home.conflicts")} onClick={jumpToConflict}><AlertTriangle size={19} /><span className="count">{conflictCount}</span></button>}
         <span className="grow" />
         {!isHelps && <button className={"nav-btn" + (showSearch ? " active" : "")} title={t("translate.search")} onClick={() => setShowSearch((s) => !s)}><Search size={19} /><span>{t("common.search")}</span></button>}
@@ -224,11 +228,11 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
             )}
             <Button size="sm" variant="ghost" onClick={() => setShowSources(true)}><Plus size={14} /> {sources.length ? t("translate.add_source") : t("translate.edit_source")}</Button>
           </div>
-          {mode !== "read" && !isHelps && (
+          {viewMode !== "read" && viewMode !== "mast" && !isHelps && (
             <Button size="sm" variant={blind ? "primary" : "ghost"} title={t("translate.blind")} onClick={() => setBlind((b) => !b)}>{blind ? <EyeOff size={14} /> : <Eye size={14} />}</Button>
           )}
           <CollabPill collab={collab} onClick={() => setShowCollab(true)} />
-          {mode === "review" && !isHelps && <MarkAllButton id={id} onDone={() => setRefresh((r) => r + 1)} />}
+          {viewMode === "review" && !isHelps && <MarkAllButton id={id} onDone={() => setRefresh((r) => r + 1)} />}
         </div>
 
         {showSearch && <SearchBar id={id} onPick={(ch, chunk) => { setChapter(ch); setFocus(chunk); setMode("review"); }} onClose={() => setShowSearch(false)} />}
@@ -257,14 +261,14 @@ export default function TranslateScreen({ id, initialChapter, initialChunk, init
             <Button size="sm" onClick={() => setShowSources(true)}>{t("translate.edit_source")}</Button>
           </div>
         )}
-        {current ? (mode === "mast" && current.id !== "front" ? (
-          <MastView detail={detail} chapter={current} source={source} rtl={!!rtl} collab={collab} remote={remote} refresh={refresh} onChanged={() => { load(); }} me={me} />
+        {current ? (viewMode === "mast" && current.id !== "front" ? (
+          <MastView detail={detail} chapter={current} source={source} rtl={!!rtl} collab={collab} remote={remote} refresh={refresh} onChanged={() => { load(); }} me={collab.me || me} onGoTo={(ch) => { setChapter(ch); setFocus(null); }} />
         ) : (
           <ChapterView
-            key={`${chapter}-${mode}-${source?.language_slug}-${source?.slug}-${refresh}`}
+            key={`${chapter}-${viewMode}-${source?.language_slug}-${source?.slug}-${refresh}`}
             detail={detail}
             chapter={current}
-            mode={mode === "mast" ? "review" : mode}
+            mode={viewMode === "mast" ? "review" : viewMode}
             source={source}
             blind={blind}
             rtl={!!rtl}
@@ -811,7 +815,7 @@ function ChunkCard(props: {
   const showHelps = props.review && !isTitle && !isHelps && helps && (helps.has_notes || helps.has_words || helps.has_questions);
   const expected = data?.expected_verses ?? [];
   const placeholder = isTitle ? "" : expected.length ? expected.map((v) => `\\v ${v} `).join("") : t("translate.verses_hint");
-  const canEdit = !data?.finished && (editing || !props.review || isHelps);
+  const canEdit = !data?.finished && !props.mast?.readOnly && (editing || !props.review || isHelps);
   const arrangeBtn = canEdit && !isTitle && !isHelps && !data?.has_conflict ? (
     <Button size="sm" variant={arrange ? "primary" : "ghost"} icon={!arrange} title={t("translate.arrange")} onClick={() => { setArrange((a) => !a); setPickedNew(null); }}>
       <Move size={14} />{arrange ? ` ${t("common.done")}` : null}
@@ -850,7 +854,7 @@ function ChunkCard(props: {
           {data && !isTitle && !data.has_conflict && (
             props.review ? (
               <>
-                {!data.finished && <Button size="sm" variant={editing ? "primary" : "ghost"} icon={!editing} title={t("translate.chunk")} onClick={() => (editing ? finishEditing() : startEdit())}>{editing ? t("common.done") : <Pencil size={14} />}</Button>}
+                {!data.finished && !props.mast?.readOnly && <Button size="sm" variant={editing ? "primary" : "ghost"} icon={!editing} title={t("translate.chunk")} onClick={() => (editing ? finishEditing() : startEdit())}>{editing ? t("common.done") : <Pencil size={14} />}</Button>}
                 {editing && !isHelps && !arrange && <Button size="sm" variant="ghost" title={t("translate.add_footnote")} onClick={insertFootnote}>ƒ</Button>}
                 {editing && arrangeBtn}
                 <Button size="sm" variant="ghost" icon title={t("translate.history")} onClick={openHistory}><History size={14} /></Button>
@@ -1053,6 +1057,7 @@ function MastView(props: {
   refresh: number;
   onChanged: () => void;
   me: string;
+  onGoTo: (chapter: string) => void;
 }) {
   const { t } = useT();
   const fb = useFeedback();
@@ -1061,11 +1066,25 @@ function MastView(props: {
   const [file, setFile] = useState<MastFile | null>(null);
   const [selected, setSelected] = useState<MastStep | null>(null);
   const [busy, setBusy] = useState(false);
+  // Compañeros del equipo (usuarios de WACS) para elegir revisor; sin equipo se escribe el nombre.
+  const [members, setMembers] = useState<string[] | null>(null);
+  useEffect(() => {
+    if (!props.collab.enabled) { setMembers(null); return; }
+    let alive = true;
+    api.collabMembers(id).then((m) => { if (alive) setMembers([m.owner, ...m.collaborators.map((u) => u.username)].filter((u) => !!u)); }).catch(() => { if (alive) setMembers(null); });
+    return () => { alive = false; };
+  }, [props.collab.enabled, id]);
   const reload = useCallback(() => api.mastStatus(id).then(setFile).catch(fb.error), [id]);
   useEffect(() => { reload(); }, [reload, props.remote.tick]);
   useEffect(() => { setSelected(null); }, [chapter.id]);
-  const step: MastStep = selected ?? (file ? currentStep(file, chapter.id) : "consume");
+  // No se puede saltar más allá del primer paso sin terminar.
+  const cur: MastStep = file ? currentStep(file, chapter.id) : "consume";
+  const step: MastStep = selected && MAST_STEPS.indexOf(selected) <= MAST_STEPS.indexOf(cur) ? selected : cur;
   const idx = MAST_STEPS.indexOf(step);
+  const passed = stepStatus(stepState(file, chapter.id, step), step) === "passed";
+  const chapterChecker = file?.chapters[chapter.id]?.checker ?? "";
+  const iAmChecker = sameUser(chapterChecker, props.me);
+  const pending = pendingFor(file, props.me);
   // Las confirmaciones se comparten en el acto (los demás las esperan para seguir);
   // las notas y el revisor viajan en la pasada normal de sincronización.
   const apply = (p: Promise<MastFile>, share = false) => {
@@ -1090,25 +1109,31 @@ function MastView(props: {
       fb.toast(t("mast.chapter_done"), "success");
     }
     await apply(api.mastConfirm(id, chapter.id, step, role, on), true);
+    // Tras confirmar (o deshacer) se sigue el recorrido: el panel pasa al primer paso sin terminar.
+    setSelected(null);
   };
   const ctx = useMemo<MastCtx>(() => ({
     step,
     notes: file?.chapters[chapter.id]?.notes ?? {},
     me: props.me,
+    readOnly: iAmChecker,
     onAddNote: (chunk, text) => { void apply(api.mastAddNote(id, chapter.id, chunk, step, text)); },
     onRemoveNote: (chunk, at) => { void apply(api.mastRemoveNote(id, chapter.id, chunk, at)); },
-  }), [step, file, props.me, id, chapter.id]);
+  }), [step, file, props.me, id, chapter.id, iAmChecker]);
   return (
     <>
+      <MastPendingBanner pending={pending} onGo={props.onGoTo} />
       <MastStepBar file={file} chapter={chapter.id} selected={step} onSelect={setSelected} />
       <MastStepPanel
         step={step}
         state={stepState(file, chapter.id, step)}
-        checker={file?.chapters[chapter.id]?.checker ?? ""}
-        onChecker={(c) => { void apply(api.mastSetChecker(id, chapter.id, c)); }}
+        checker={chapterChecker}
+        me={props.me}
+        members={members}
+        onChecker={(c) => { void apply(api.mastSetChecker(id, chapter.id, c), true); }}
         onConfirm={(role, on) => { void confirm(role, on); }}
         onPrev={idx > 0 ? () => setSelected(MAST_STEPS[idx - 1]) : undefined}
-        onNext={idx < MAST_STEPS.length - 1 ? () => setSelected(MAST_STEPS[idx + 1]) : undefined}
+        onNext={passed && idx < MAST_STEPS.length - 1 ? () => setSelected(MAST_STEPS[idx + 1]) : undefined}
         team={props.collab.enabled}
         busy={busy}
       >

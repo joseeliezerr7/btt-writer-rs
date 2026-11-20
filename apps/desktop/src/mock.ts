@@ -105,6 +105,7 @@ const summary = (p: MockProject) => {
     project_name: "", type_id: p.type, resource_id: p.resource, resource_name: "", translators: p.translators, finished_chunks: p.finished.length,
     translated_chunks: Object.values(p.chunks).filter(Boolean).length, modified_at: Math.floor(Date.now() / 1000) - 3600, total_chunks: total, progress: p.finished.length / total,
     has_conflicts: Object.values(p.chunks).some((c) => c.includes("<<<<<<< ")), last_backup: null,
+    mast_pending: p.mode === "mast" ? Object.values(mastOf(p.id).chapters).reduce((n, ch) => n + (ch.checker && ch.checker.toLowerCase() === (profile.full_name || "Jose").toLowerCase() ? ["peer_edit", "key_words", "verse_check"].filter((s) => ch.steps[s]?.translator && !ch.steps[s]?.translator?.undone && !(ch.steps[s]?.checker && !ch.steps[s]?.checker?.undone)).length : 0), 0) : 0,
   };
 };
 // Estado simulado del trabajo en equipo.
@@ -163,7 +164,6 @@ export async function mockInvoke<T>(cmd: string, a: Record<string, unknown> = {}
       const role = s("role") as "translator" | "checker"; const me = profile.full_name || "Jose";
       const prev = st[role];
       st[role] = { by: me, at: Math.max(Math.floor(Date.now() / 1000), (prev?.at ?? -1) + 1), undone: !a.on };
-      if (a.on && role === "checker" && !ch.checker) ch.checker = me;
       return delay(JSON.parse(JSON.stringify(m))) as T;
     }
     case "mast_set_checker": { const m = mastOf(s("id")); (m.chapters[s("chapter")] ??= { steps: {} }).checker = s("checker").trim(); return delay(JSON.parse(JSON.stringify(m))) as T; }
