@@ -235,6 +235,18 @@ export function ProjectDetailsDialog({ item, onClose, onChanged, onDeleted }: { 
               </select>
             )}
           </dd>
+          {p.type_id === "text" && (
+            <>
+              <dt>{t("details.mode")}</dt>
+              <dd>
+                <select className="select" style={{ width: "auto" }} value={detail.manifest.translation_mode || "classic"} onChange={async (e) => { try { await api.setProjectMode(p.id, e.target.value as TranslationMode); await load(); onChanged(); } catch (err) { fb.error(err); } }}>
+                  <option value="classic">{t("new.mode.classic")}</option>
+                  <option value="team">{t("new.mode.team")}</option>
+                  <option value="mast">{t("new.mode.mast")}</option>
+                </select>
+              </dd>
+            </>
+          )}
           <dt>{t("details.progress")}</dt>
           <dd className="col" style={{ alignItems: "stretch" }}>
             <div className="progress-bar"><div style={{ width: `${Math.round(p.progress * 100)}%` }} /></div>

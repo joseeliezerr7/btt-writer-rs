@@ -161,19 +161,20 @@ export async function mockInvoke<T>(cmd: string, a: Record<string, unknown> = {}
     case "mast_confirm": {
       const m = mastOf(s("id")); const ch = (m.chapters[s("chapter")] ??= { steps: {} }); const st = (ch.steps[s("step")] ??= {});
       const role = s("role") as "translator" | "checker"; const me = profile.full_name || "Jose";
-      if (a.on) { st[role] = { by: me, at: Math.floor(Date.now() / 1000) }; if (role === "checker" && !ch.checker) ch.checker = me; } else delete st[role];
-      if (!st.translator && !st.checker) delete ch.steps[s("step")];
+      const prev = st[role];
+      st[role] = { by: me, at: Math.max(Math.floor(Date.now() / 1000), (prev?.at ?? -1) + 1), undone: !a.on };
+      if (a.on && role === "checker" && !ch.checker) ch.checker = me;
       return delay(JSON.parse(JSON.stringify(m))) as T;
     }
     case "mast_set_checker": { const m = mastOf(s("id")); (m.chapters[s("chapter")] ??= { steps: {} }).checker = s("checker").trim(); return delay(JSON.parse(JSON.stringify(m))) as T; }
     case "mast_add_note": {
       const m = mastOf(s("id")); const ch = (m.chapters[s("chapter")] ??= { steps: {} }); const text = s("text").trim();
-      if (text) ((ch.notes ??= {})[s("chunk")] ??= []).push({ by: profile.full_name || "Jose", at: Math.floor(Date.now() / 1000), step: s("step"), text });
+      if (text) { const list = ((ch.notes ??= {})[s("chunk")] ??= []); const me = profile.full_name || "Jose"; const at = Math.max(Math.floor(Date.now() / 1000), ...list.filter((n) => n.by === me).map((n) => n.at + 1)); list.push({ by: me, at, step: s("step"), text }); }
       return delay(JSON.parse(JSON.stringify(m))) as T;
     }
     case "mast_remove_note": {
-      const m = mastOf(s("id")); const list = m.chapters[s("chapter")]?.notes?.[s("chunk")];
-      if (list) { const i = list.findIndex((n) => n.at === a.at); if (i >= 0) list.splice(i, 1); }
+      const m = mastOf(s("id")); const n = m.chapters[s("chapter")]?.notes?.[s("chunk")]?.find((n) => n.at === a.at && !n.deleted);
+      if (n) { n.deleted = true; n.text = ""; }
       return delay(JSON.parse(JSON.stringify(m))) as T;
     }
     case "delete_project": projects.splice(projects.findIndex((p) => p.id === s("id")), 1); return delay("C:/mock/backups/" + s("id") + ".tstudio") as T;

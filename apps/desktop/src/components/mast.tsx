@@ -3,7 +3,7 @@
 // El progreso viene de `mast.json` (ver btt_core::mast) y lo maneja Translate.
 import { useEffect, useState, type ReactNode } from "react";
 import { Check, ChevronLeft, ChevronRight, Clock, MessageSquare, Trash2, Users } from "lucide-react";
-import { MAST_STEPS, mastNeedsChecker, type ChunkInfo, type MastFile, type MastNote, type MastStep, type MastStepState } from "../api";
+import { MAST_STEPS, mastNeedsChecker, type ChunkInfo, type MastConfirmation, type MastFile, type MastNote, type MastStep, type MastStepState } from "../api";
 import { useT } from "../i18n";
 import { Button } from "./ui";
 import { ago } from "./collab";
@@ -15,9 +15,12 @@ export function stepState(file: MastFile | null, chapter: string, step: MastStep
 }
 
 /** `passed` con las confirmaciones necesarias, `waiting` si falta una de las dos, `not_started` si ninguna. */
+/** Confirmación vigente (no retirada). */
+export const confirmedBy = (c: MastConfirmation | undefined) => (c && !c.undone ? c : undefined);
+
 export function stepStatus(st: MastStepState, step: MastStep): StepStatus {
-  const t = !!st.translator;
-  const c = !!st.checker;
+  const t = !!confirmedBy(st.translator);
+  const c = !!confirmedBy(st.checker);
   if (t && (c || !mastNeedsChecker(step))) return "passed";
   return t || c ? "waiting" : "not_started";
 }
@@ -92,8 +95,8 @@ export function MastStepPanel(props: {
         </label>
       )}
       <div className="mast-confirm">
-        {confirmed(state.translator, "translator", t("mast.confirm_translator"))}
-        {mastNeedsChecker(step) && confirmed(state.checker, "checker", t("mast.confirm_checker"))}
+        {confirmed(confirmedBy(state.translator), "translator", t("mast.confirm_translator"))}
+        {mastNeedsChecker(step) && confirmed(confirmedBy(state.checker), "checker", t("mast.confirm_checker"))}
         {props.team && <span className="small muted">{t("mast.team_hint")}</span>}
         <span className="grow" />
         {props.onPrev && <Button size="sm" variant="ghost" onClick={props.onPrev}><ChevronLeft size={14} /> {t("mast.prev")}</Button>}
@@ -113,7 +116,8 @@ export function MastChunkList({ chunks }: { chunks: ChunkInfo[] }) {
       <ol className="mast-chunks small">
         {verses.map((from, i) => {
           const to = i + 1 < verses.length ? verses[i + 1] - 1 : null;
-          return <li key={from}>{to === null || to === from ? (to === from ? t("mast.chunk_range", { n: i + 1, from, to }) : t("mast.chunk_from", { n: i + 1, from })) : t("mast.chunk_range", { n: i + 1, from, to })}</li>;
+          const label = to === null ? t("mast.chunk_from", { n: i + 1, from }) : to === from ? t("mast.chunk_one", { n: i + 1, from }) : t("mast.chunk_range", { n: i + 1, from, to });
+          return <li key={from}>{label}</li>;
         })}
       </ol>
     </div>
@@ -133,7 +137,7 @@ export function MastNotes({ notes, me, onAdd, onRemove }: { notes: MastNote[]; m
   return (
     <div className="mast-notes">
       <span className="small muted row" style={{ gap: ".3rem" }}><MessageSquare size={13} /> {t("mast.notes")}</span>
-      {notes.map((n) => (
+      {notes.filter((n) => !n.deleted).map((n) => (
         <div key={n.by + n.at} className="mast-note small">
           <span className="who">{n.by}</span>
           <span className="grow">{n.text}</span>

@@ -115,9 +115,11 @@ export type TranslationMode = "classic" | "team" | "mast";
 export type MastStep = "consume" | "verbalize" | "chunk" | "blind_draft" | "self_edit" | "peer_edit" | "key_words" | "verse_check" | "markers";
 export const MAST_STEPS: MastStep[] = ["consume", "verbalize", "chunk", "blind_draft", "self_edit", "peer_edit", "key_words", "verse_check", "markers"];
 export const mastNeedsChecker = (s: MastStep) => s === "peer_edit" || s === "key_words" || s === "verse_check";
-export interface MastConfirmation { by: string; at: number }
+/** `undone`: la confirmación se retiró (queda con fecha para que la fusión respete lo más reciente). */
+export interface MastConfirmation { by: string; at: number; undone?: boolean }
 export interface MastStepState { translator?: MastConfirmation; checker?: MastConfirmation }
-export interface MastNote { by: string; at: number; step: string; text: string }
+/** `deleted`: lápida de una nota borrada por su autor; no se muestra. */
+export interface MastNote { by: string; at: number; step: string; text: string; deleted?: boolean }
 export interface MastChapter { steps: Record<string, MastStepState>; checker?: string; notes?: Record<string, MastNote[]> }
 export interface MastFile { chapters: Record<string, MastChapter> }
 

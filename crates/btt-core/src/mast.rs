@@ -27,10 +27,22 @@ pub fn is_step(step: &str) -> bool {
     STEPS.contains(&step)
 }
 
+fn is_false(b: &bool) -> bool {
+    !*b
+}
+
+/// Una confirmación, o su retirada (`undone`): se guarda igual, con fecha, para
+/// que al fusionar dos copias gane siempre lo más reciente.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub struct Confirmation {
     pub by: String,
     pub at: u64,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub undone: bool,
+}
+
+fn active(c: &Option<Confirmation>) -> bool {
+    c.as_ref().map(|c| !c.undone).unwrap_or(false)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -44,8 +56,8 @@ pub struct StepState {
 impl StepState {
     /// `passed`, `waiting` (falta una de las dos confirmaciones) o `not_started`.
     pub fn status(&self, step: &str) -> &'static str {
-        let t = self.translator.is_some();
-        let c = self.checker.is_some();
+        let t = active(&self.translator);
+        let c = active(&self.checker);
         if t && (c || !needs_checker(step)) {
             "passed"
         } else if t || c {
@@ -63,6 +75,9 @@ pub struct Note {
     #[serde(default)]
     pub step: String,
     pub text: String,
+    /// Borrada por su autor: se conserva como lápida para que no vuelva al fusionar.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub deleted: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
@@ -125,12 +140,12 @@ pub fn confirm(root: &Path, chapter: &str, step: &str, role: Role, user: &str, o
         Role::Translator => &mut st.translator,
         Role::Checker => &mut st.checker,
     };
-    *slot = if on { Some(Confirmation { by: user.to_string(), at: now }) } else { None };
+    // Nunca se retrocede en el tiempo: una confirmación recibida del equipo con
+    // fecha posterior (reloj adelantado) no se pisa con una más antigua.
+    let at = slot.as_ref().map(|c| c.at + 1).unwrap_or(0).max(now);
+    *slot = Some(Confirmation { by: user.to_string(), at, undone: !on });
     if role == Role::Checker && on && ch.checker.is_empty() {
         ch.checker = user.to_string();
-    }
-    if st.translator.is_none() && st.checker.is_none() {
-        ch.steps.remove(step);
     }
     save(root, &f)?;
     Ok(f)
@@ -149,32 +164,33 @@ pub fn add_note(root: &Path, chapter: &str, chunk: &str, step: &str, user: &str,
     let mut f = load(root);
     let text = text.trim();
     if !text.is_empty() {
-        f.chapters
-            .entry(chapter.to_string())
-            .or_default()
-            .notes
-            .entry(chunk.to_string())
-            .or_default()
-            .push(Note { by: user.to_string(), at: now, step: step.to_string(), text: text.to_string() });
+        let list = f.chapters.entry(chapter.to_string()).or_default().notes.entry(chunk.to_string()).or_default();
+        // (autor, fecha) identifica la nota: dos seguidas en el mismo segundo no comparten clave.
+        let at = list.iter().filter(|n| n.by == user).map(|n| n.at + 1).max().unwrap_or(0).max(now);
+        list.push(Note { by: user.to_string(), at, step: step.to_string(), text: text.to_string(), deleted: false });
         save(root, &f)?;
     }
     Ok(f)
 }
 
-/// Quita una nota propia (misma persona y misma fecha).
+/// Borra una nota propia (misma persona y misma fecha). Queda como lápida, sin
+/// texto, para que la fusión con otra copia no la resucite.
 pub fn remove_note(root: &Path, chapter: &str, chunk: &str, user: &str, at: u64) -> Result<MastFile> {
     let _guard = crate::project::lock_project(root);
     let mut f = load(root);
-    if let Some(ch) = f.chapters.get_mut(chapter) {
-        if let Some(list) = ch.notes.get_mut(chunk) {
-            list.retain(|n| !(n.by == user && n.at == at));
-            if list.is_empty() {
-                ch.notes.remove(chunk);
-            }
+    if let Some(list) = f.chapters.get_mut(chapter).and_then(|ch| ch.notes.get_mut(chunk)) {
+        if let Some(n) = list.iter_mut().find(|n| n.by == user && n.at == at && !n.deleted) {
+            n.deleted = true;
+            n.text.clear();
         }
     }
     save(root, &f)?;
     Ok(f)
+}
+
+/// Notas visibles (sin las borradas) de un chunk.
+pub fn visible_notes(list: &[Note]) -> Vec<&Note> {
+    list.iter().filter(|n| !n.deleted).collect()
 }
 
 fn later(a: &Option<Confirmation>, b: &Option<Confirmation>) -> Option<Confirmation> {
@@ -203,8 +219,14 @@ pub fn merge(a: &MastFile, b: &MastFile) -> MastFile {
         for (chunk, notes) in &bc.notes {
             let list = oc.notes.entry(chunk.clone()).or_default();
             for n in notes {
-                if !list.contains(n) {
-                    list.push(n.clone());
+                match list.iter_mut().find(|m| m.by == n.by && m.at == n.at) {
+                    // La misma nota en las dos copias: si alguna la borró, borrada queda.
+                    Some(m) => {
+                        if n.deleted && !m.deleted {
+                            *m = n.clone();
+                        }
+                    }
+                    None => list.push(n.clone()),
                 }
             }
             list.sort_by_key(|n| n.at);
@@ -242,10 +264,20 @@ mod tests {
         assert_eq!(ch.steps["peer_edit"].status("peer_edit"), "passed");
         assert_eq!(ch.checker, "beto", "el primer revisor que confirma queda asignado");
 
-        // Retirar la única confirmación borra el paso del archivo.
+        // Deshacer deja una lápida con fecha: el paso vuelve a estar pendiente.
         let f = confirm(root, "01", "consume", Role::Translator, "ana", false, 40).unwrap();
-        assert!(!f.chapters["01"].steps.contains_key("consume"));
+        let c = f.chapters["01"].steps["consume"].translator.clone().unwrap();
+        assert!(c.undone && c.at == 40);
+        assert_eq!(f.chapters["01"].steps["consume"].status("consume"), "not_started");
         assert_eq!(f.chapters["01"].current_step(), "consume");
+        // Y esa retirada gana al fusionar con una copia que aún tenía la confirmación vieja.
+        let mut old = MastFile::default();
+        old.chapters.entry("01".into()).or_default().steps.entry("consume".into()).or_default().translator = Some(Confirmation { by: "ana".into(), at: 10, undone: false });
+        assert_eq!(merge(&old, &f).chapters["01"].steps["consume"].status("consume"), "not_started");
+        assert_eq!(merge(&f, &old).chapters["01"].steps["consume"].status("consume"), "not_started");
+        // Confirmar de nuevo con un reloj atrasado no retrocede la fecha.
+        let f = confirm(root, "01", "consume", Role::Translator, "ana", true, 5).unwrap();
+        assert!(f.chapters["01"].steps["consume"].translator.as_ref().unwrap().at > 40);
     }
 
     #[test]
@@ -256,8 +288,17 @@ mod tests {
         let f = add_note(root, "01", "05", "peer_edit", "beto", "", 6).unwrap();
         assert_eq!(f.chapters["01"].notes["05"].len(), 1, "una nota vacía no se guarda");
         assert_eq!(f.chapters["01"].notes["05"][0].text, "falta 'en verdad'");
+        // Dos notas en el mismo segundo no comparten clave.
+        let f = add_note(root, "01", "05", "peer_edit", "beto", "otra", 5).unwrap();
+        assert_eq!(f.chapters["01"].notes["05"][1].at, 6);
         let f = remove_note(root, "01", "05", "beto", 5).unwrap();
-        assert!(f.chapters["01"].notes.is_empty());
+        let notes = &f.chapters["01"].notes["05"];
+        assert_eq!(visible_notes(notes).iter().map(|n| n.text.as_str()).collect::<Vec<_>>(), vec!["otra"]);
+        assert!(notes[0].deleted && notes[0].text.is_empty(), "queda la lápida sin texto");
+        // La copia que todavía tenía la nota no la resucita al fusionar.
+        let mut old = MastFile::default();
+        old.chapters.entry("01".into()).or_default().notes.entry("05".into()).or_default().push(Note { by: "beto".into(), at: 5, step: "peer_edit".into(), text: "falta 'en verdad'".into(), deleted: false });
+        assert_eq!(visible_notes(&merge(&old, &f).chapters["01"].notes["05"]).len(), 1);
     }
 
     #[test]
@@ -265,13 +306,13 @@ mod tests {
         let mut a = MastFile::default();
         let mut b = MastFile::default();
         let ca = a.chapters.entry("01".into()).or_default();
-        ca.steps.entry("peer_edit".into()).or_default().translator = Some(Confirmation { by: "ana".into(), at: 1 });
-        ca.notes.entry("05".into()).or_default().push(Note { by: "ana".into(), at: 1, step: "peer_edit".into(), text: "x".into() });
+        ca.steps.entry("peer_edit".into()).or_default().translator = Some(Confirmation { by: "ana".into(), at: 1, undone: false });
+        ca.notes.entry("05".into()).or_default().push(Note { by: "ana".into(), at: 1, step: "peer_edit".into(), text: "x".into(), deleted: false });
         let cb = b.chapters.entry("01".into()).or_default();
         cb.checker = "beto".into();
-        cb.steps.entry("peer_edit".into()).or_default().checker = Some(Confirmation { by: "beto".into(), at: 2 });
-        cb.notes.entry("05".into()).or_default().push(Note { by: "beto".into(), at: 2, step: "peer_edit".into(), text: "y".into() });
-        cb.notes.entry("05".into()).or_default().push(Note { by: "ana".into(), at: 1, step: "peer_edit".into(), text: "x".into() });
+        cb.steps.entry("peer_edit".into()).or_default().checker = Some(Confirmation { by: "beto".into(), at: 2, undone: false });
+        cb.notes.entry("05".into()).or_default().push(Note { by: "beto".into(), at: 2, step: "peer_edit".into(), text: "y".into(), deleted: false });
+        cb.notes.entry("05".into()).or_default().push(Note { by: "ana".into(), at: 1, step: "peer_edit".into(), text: "x".into(), deleted: false });
         let m = merge(&a, &b);
         let ch = &m.chapters["01"];
         assert_eq!(ch.steps["peer_edit"].status("peer_edit"), "passed");

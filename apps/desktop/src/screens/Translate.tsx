@@ -46,6 +46,9 @@ function Checklist({ t }: { t: (k: string) => string }) {
 
 type Mode = "read" | "chunk" | "review" | "mast";
 
+/** Chunks cuyo borrador a ciegas ya empezó (fuente cerrada) mientras la app esté abierta. */
+const blindStarted = new Set<string>();
+
 /** Lo que el recorrido MAST le pasa a las tarjetas: el paso actual y las notas de revisión. */
 interface MastCtx {
   step: MastStep;
@@ -540,10 +543,6 @@ function ChunkCard(props: {
   const { t, lang } = useT();
   const fb = useFeedback();
   const { detail, chapter, chunk, source } = props;
-  // Borrador a ciegas de MAST: primero se lee el chunk; al "cerrarlo" se oculta la fuente y se escribe.
-  const mastBlind = props.mast?.step === "blind_draft";
-  const [prepared, setPrepared] = useState(false);
-  // Un chunk que ya tiene texto se abre directamente para seguir escribiendo.
   // En MAST, "Terminado" se marca en el último paso (marcas de versículo), no antes.
   const hideDone = !!props.mast && props.mast.step !== "markers";
   const id = detail.item.id;
@@ -555,6 +554,14 @@ function ChunkCard(props: {
   const [text, setText] = useState("");
   const [editing, setEditing] = useState(false);
   const [saved, setSaved] = useState(true);
+  // Borrador a ciegas de MAST: primero se lee el chunk; al "cerrarlo" se oculta la fuente y se escribe.
+  // Un chunk que ya tiene texto se abre directamente para seguir escribiendo, y una vez cerrada la
+  // fuente sigue cerrada aunque se borre el texto o la tarjeta se vuelva a montar (se recuerda por chunk).
+  const mastBlind = props.mast?.step === "blind_draft";
+  const blindKey = `${detail.item.id}/${chapter}/${chunk.id}`;
+  const [prepared, setPreparedState] = useState(() => blindStarted.has(blindKey));
+  const setPrepared = (v: boolean) => { if (v) blindStarted.add(blindKey); else blindStarted.delete(blindKey); setPreparedState(v); };
+  useEffect(() => { if (mastBlind && text && !prepared) setPrepared(true); }, [mastBlind, text]);
   const [helps, setHelps] = useState<Helps | null>(null);
   const [helpTab, setHelpTab] = useState<"notes" | "words" | "questions">("notes");
   const [word, setWord] = useState<WordArticle | null>(null);
@@ -816,7 +823,7 @@ function ChunkCard(props: {
       {/* Fuente */}
       <div className="pane">
         <div className="pane-head"><span className="title">{title}</span><span className="grow" />{source ? <span className="ref">{source.language_slug} {source.slug}</span> : null}</div>
-        {(props.blind && !props.review) || (mastBlind && (prepared || !!text)) ? (
+        {(props.blind && !props.review) || (mastBlind && prepared) ? (
           <div className="muted" style={{ flex: 1, display: "grid", placeItems: "center" }}><EyeOff /> {t("translate.blind")}</div>
         ) : (
           <div className="source-text">
@@ -826,7 +833,7 @@ function ChunkCard(props: {
             {isHelps && !isTw && source?.downloaded && !isTitle && <SourceHelps source={source} project={detail.manifest.project.id} chapter={chapter} chunk={chunk.id} type={type} />}
           </div>
         )}
-        {mastBlind && !prepared && !text && (
+        {mastBlind && !prepared && (
           <div className="row" style={{ marginTop: ".6rem" }}>
             <Button variant="primary" onClick={() => setPrepared(true)}><EyeOff size={14} /> {t("mast.start_blind")}</Button>
           </div>
@@ -893,7 +900,7 @@ function ChunkCard(props: {
           </div>
         ) : isHelps && !isTitle ? (
           <HelpsEditor key={data.text} items={data.helps} type={type} readOnly={!canEdit} onChange={async (items) => { const txt = await api.writeHelps(id, chapter, chunk.id, items).catch((e) => { fb.error(e); return null; }); if (txt !== null) setText(txt); }} />
-        ) : mastBlind && !prepared && !text ? (
+        ) : mastBlind && !prepared ? (
           <div className="muted small" style={{ flex: 1 }}>{t("mast.read_chunk")}</div>
         ) : canEdit ? (
           <>
@@ -1059,9 +1066,11 @@ function MastView(props: {
   useEffect(() => { setSelected(null); }, [chapter.id]);
   const step: MastStep = selected ?? (file ? currentStep(file, chapter.id) : "consume");
   const idx = MAST_STEPS.indexOf(step);
-  const apply = (p: Promise<MastFile>) => {
+  // Las confirmaciones se comparten en el acto (los demás las esperan para seguir);
+  // las notas y el revisor viajan en la pasada normal de sincronización.
+  const apply = (p: Promise<MastFile>, share = false) => {
     setBusy(true);
-    return p.then((f) => { setFile(f); if (props.collab.enabled) void props.collab.sync(); }).catch(fb.error).finally(() => setBusy(false));
+    return p.then((f) => { setFile(f); if (share && props.collab.enabled) void props.collab.sync(); }).catch(fb.error).finally(() => setBusy(false));
   };
   const confirm = async (role: "translator" | "checker", on: boolean) => {
     if (step === "markers" && role === "translator" && on) {
@@ -1080,16 +1089,15 @@ function MastView(props: {
       }
       fb.toast(t("mast.chapter_done"), "success");
     }
-    await apply(api.mastConfirm(id, chapter.id, step, role, on));
+    await apply(api.mastConfirm(id, chapter.id, step, role, on), true);
   };
-  const notes = file?.chapters[chapter.id]?.notes ?? {};
   const ctx = useMemo<MastCtx>(() => ({
     step,
-    notes,
+    notes: file?.chapters[chapter.id]?.notes ?? {},
     me: props.me,
     onAddNote: (chunk, text) => { void apply(api.mastAddNote(id, chapter.id, chunk, step, text)); },
     onRemoveNote: (chunk, at) => { void apply(api.mastRemoveNote(id, chapter.id, chunk, at)); },
-  }), [step, notes, props.me, id, chapter.id]);
+  }), [step, file, props.me, id, chapter.id]);
   return (
     <>
       <MastStepBar file={file} chapter={chapter.id} selected={step} onSelect={setSelected} />
@@ -1107,7 +1115,7 @@ function MastView(props: {
         {step === "chunk" && <MastChunkList chunks={chapter.chunks} />}
       </MastStepPanel>
       <ChapterView
-        key={`${chapter.id}-${step}-${props.source?.language_slug}-${props.source?.slug}-${props.refresh}`}
+        key={`${chapter.id}-${props.source?.language_slug}-${props.source?.slug}-${props.refresh}`}
         detail={detail}
         chapter={chapter}
         mode="review"
