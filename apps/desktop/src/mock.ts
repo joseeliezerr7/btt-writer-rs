@@ -1,6 +1,6 @@
 // Backend simulado para abrir la interfaz en un navegador normal (sin Tauri).
 // Solo se usa cuando no existe el puente IPC; permite probar las pantallas.
-import type { ChunkData, HelpItem, Issue } from "./api";
+import type { ChunkData, HelpItem, Issue, MastFile } from "./api";
 import { suggestWords } from "./components/predict";
 
 const languages = [
@@ -61,12 +61,17 @@ const SOURCE: Record<string, Record<string, { number: string; text: string }[]>>
 interface MockProject {
   id: string; language: typeof languages[number]; project: string; type: string; resource: string;
   chunks: Record<string, string>; finished: string[]; translators: string[]; sources: { language_id: string; resource_id: string }[]; title: string;
+  mode?: string;
 }
+// Progreso MAST por proyecto (en memoria), como `mast.json`.
+const masts: Record<string, MastFile> = {};
+const mastOf = (id: string) => (masts[id] ??= { chapters: {} });
+
 const projects: MockProject[] = [
   {
     id: "cbt_3jn_text_reg", language: languages[1], project: "3jn", type: "text", resource: "reg",
     chunks: { "01/01": "\\v 1 El anciano a Gayo el amado, a quien amo en verdad.\n\\v 2 Amado, oro para que seas prosperado.\n\\v 3 Pues mucho me regocijé.\n\\v 4 No tengo yo mayor gozo.", "01/05": "\\v 5 Amado \\f + \\ft nota de ejemplo\\f* fielmente te conduces.\n\\v 6 \\v 7 Porque por amor del Nombre.", "01/09": "<<<<<<< HEAD\n\\v 9 Yo escribí algo (local).\n\\v 10 Por esta causa.\n=======\n\\v 9 Yo escribí algo (servidor).\n\\v 10 Por esta causa.\n>>>>>>> refs/heads/master" },
-    finished: ["01-01"], translators: ["Joseeliezerr123"], sources: [{ language_id: "en", resource_id: "ulb" }, { language_id: "es-419", resource_id: "ulb" }], title: "3 Juan",
+    finished: ["01-01"], translators: ["Joseeliezerr123"], sources: [{ language_id: "en", resource_id: "ulb" }, { language_id: "es-419", resource_id: "ulb" }], title: "3 Juan", mode: "mast",
   },
   { id: "miq_jon_text_reg", language: languages[2], project: "jon", type: "text", resource: "reg", chunks: {}, finished: [], translators: ["Ana"], sources: [{ language_id: "en", resource_id: "ulb" }], title: "" },
   { id: "es-419_3jn_tn", language: languages[0], project: "3jn", type: "tn", resource: "", chunks: {}, finished: [], translators: ["Ana"], sources: [{ language_id: "en", resource_id: "ulb" }], title: "" },
@@ -140,16 +145,36 @@ export async function mockInvoke<T>(cmd: string, a: Record<string, unknown> = {}
       else for (const ch of Object.keys(SOURCE)) chapters.push({ id: ch, title: p.chunks[ch + "/title"] ?? "", chunks: ["title", ...Object.keys(SOURCE[ch])].map((c) => ({ id: c, finished: p.finished.includes(`${ch}-${c}`), has_text: !!p.chunks[`${ch}/${c}`], has_conflict: (p.chunks[`${ch}/${c}`] ?? "").includes("<<<<<<< ") })) });
       return delay({
         item: summary(p), book_title: p.title, chapters,
-        manifest: { package_version: 8, format: "usfm", generator: { name: "mock", build: "1" }, target_language: { id: p.language.slug, name: p.language.name, direction: p.language.direction, anglicized_name: "", region: "", is_gateway_language: false }, project: { id: p.project, name: "" }, type: { id: p.type, name: "" }, resource: { id: p.resource, name: "" }, source_translations: p.sources.map((x) => ({ ...x, checking_level: "3", date_modified: 0, version: "" })), translators: p.translators, finished_chunks: p.finished },
+        manifest: { package_version: 8, format: "usfm", generator: { name: "mock", build: "1" }, target_language: { id: p.language.slug, name: p.language.name, direction: p.language.direction, anglicized_name: "", region: "", is_gateway_language: false }, project: { id: p.project, name: "" }, type: { id: p.type, name: "" }, resource: { id: p.resource, name: "" }, source_translations: p.sources.map((x) => ({ ...x, checking_level: "3", date_modified: 0, version: "" })), translators: p.translators, finished_chunks: p.finished, translation_mode: p.mode ?? "" },
         sources: p.sources.map((x) => resources[p.type === "tw" ? "bible" : p.project]?.find((r) => r.language_slug === x.language_id && r.slug === x.resource_id) ?? resource(x.language_id, p.project, x.resource_id, x.resource_id, false)),
       }) as T;
     }
     case "create_project": {
-      const spec = a.spec as { language: string; project: string; type: string; resource: string };
+      const spec = a.spec as { language: string; project: string; type: string; resource: string; mode?: string };
       const id = spec.type === "text" ? `${spec.language}_${spec.project}_text_${spec.resource || "reg"}` : `${spec.language}_${spec.project}_${spec.type}`;
       if (projects.some((p) => p.id === id)) throw new Error("Ya estás traduciendo este libro a este idioma");
-      projects.push({ id, language: languages.find((l) => l.slug === spec.language)!, project: spec.project, type: spec.type, resource: spec.type === "text" ? spec.resource || "reg" : "", chunks: {}, finished: [], translators: [profile.full_name], sources: [{ language_id: "en", resource_id: spec.type === "tw" ? "tw" : "ulb" }], title: "" });
+      projects.push({ id, language: languages.find((l) => l.slug === spec.language)!, project: spec.project, type: spec.type, resource: spec.type === "text" ? spec.resource || "reg" : "", chunks: {}, finished: [], translators: [profile.full_name], sources: [{ language_id: "en", resource_id: spec.type === "tw" ? "tw" : "ulb" }], title: "", mode: spec.mode && spec.mode !== "classic" ? spec.mode : "" });
       return delay(id) as T;
+    }
+    case "set_project_mode": { const p = find(s("id")); p.mode = s("mode") === "classic" ? "" : s("mode"); return delay(undefined) as T; }
+    case "mast_status": return delay(JSON.parse(JSON.stringify(mastOf(s("id"))))) as T;
+    case "mast_confirm": {
+      const m = mastOf(s("id")); const ch = (m.chapters[s("chapter")] ??= { steps: {} }); const st = (ch.steps[s("step")] ??= {});
+      const role = s("role") as "translator" | "checker"; const me = profile.full_name || "Jose";
+      if (a.on) { st[role] = { by: me, at: Math.floor(Date.now() / 1000) }; if (role === "checker" && !ch.checker) ch.checker = me; } else delete st[role];
+      if (!st.translator && !st.checker) delete ch.steps[s("step")];
+      return delay(JSON.parse(JSON.stringify(m))) as T;
+    }
+    case "mast_set_checker": { const m = mastOf(s("id")); (m.chapters[s("chapter")] ??= { steps: {} }).checker = s("checker").trim(); return delay(JSON.parse(JSON.stringify(m))) as T; }
+    case "mast_add_note": {
+      const m = mastOf(s("id")); const ch = (m.chapters[s("chapter")] ??= { steps: {} }); const text = s("text").trim();
+      if (text) ((ch.notes ??= {})[s("chunk")] ??= []).push({ by: profile.full_name || "Jose", at: Math.floor(Date.now() / 1000), step: s("step"), text });
+      return delay(JSON.parse(JSON.stringify(m))) as T;
+    }
+    case "mast_remove_note": {
+      const m = mastOf(s("id")); const list = m.chapters[s("chapter")]?.notes?.[s("chunk")];
+      if (list) { const i = list.findIndex((n) => n.at === a.at); if (i >= 0) list.splice(i, 1); }
+      return delay(JSON.parse(JSON.stringify(m))) as T;
     }
     case "delete_project": projects.splice(projects.findIndex((p) => p.id === s("id")), 1); return delay("C:/mock/backups/" + s("id") + ".tstudio") as T;
     case "change_resource": { const p = find(s("id")); p.resource = s("resource"); p.id = `${p.language.slug}_${p.project}_text_${p.resource}`; return delay(p.id) as T; }

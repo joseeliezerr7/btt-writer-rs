@@ -17,6 +17,7 @@ import {
   type Issue,
   type PrintRequest,
   type ProjectDetail,
+  type TranslationMode,
   type ProjectItem,
   type ProjectRow,
   type Repo,
@@ -257,7 +258,10 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
   const { t, lang } = useT();
   const { settings } = useApp();
   const fb = useFeedback();
-  const [step, setStep] = useState<"language" | "project" | "type" | "source">("language");
+  const [step, setStep] = useState<"language" | "project" | "type" | "mode" | "source">("language");
+  // Modo de trabajo (clásico, equipo en tiempo real o MAST) y el tipo elegido a la espera del modo.
+  const [mode, setMode] = useState<TranslationMode>("classic");
+  const [pendingType, setPendingType] = useState<{ type: string; resource: string } | null>(null);
   const [langQuery, setLangQuery] = useState("");
   const [langs, setLangs] = useState<TargetLanguageRow[]>([]);
   const [language, setLanguage] = useState<TargetLanguageRow | null>(null);
@@ -298,7 +302,7 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
     }
     setBusy(true);
     try {
-      const id = await api.createProject({ language: language.slug, project: book.slug, type, resource });
+      const id = await api.createProject({ language: language.slug, project: book.slug, type, resource, mode: type === "text" ? mode : "classic" });
       if (source) await api.setProjectSources(id, [source]).catch(fb.error);
       onCreated(id);
     } catch (e) {
@@ -329,9 +333,18 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
     setBook(b);
     const isTw = b.slug === "bible" || b.slug === "bible-obs";
     if (isTw) return create("tw", "", null);
-    if (b.slug === "obs") return goSource(b, "text", "obs");
+    if (b.slug === "obs") return goMode("text", "obs");
     if (glMode) setStep("type");
-    else goSource(b, "text", "reg");
+    else goMode("text", "reg");
+  };
+  /** Los proyectos de texto eligen el modo de trabajo antes de la fuente; las ayudas (tN/tQ) no lo necesitan. */
+  const goMode = (type: string, resource: string) => {
+    setPendingType({ type, resource });
+    setStep("mode");
+  };
+  const pickMode = (m: TranslationMode) => {
+    setMode(m);
+    if (book && pendingType) goSource(book, pendingType.type, pendingType.resource);
   };
 
   const downloadRow = async (r: ResourceRow) => {
@@ -361,8 +374,13 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
     return Object.entries(g).sort(([a], [b]) => order(a) - order(b));
   }, [filteredBooks, cats]);
 
-  const stepOrder: ("language" | "project" | "type" | "source")[] = glMode ? ["language", "project", "type", "source"] : ["language", "project", "source"];
-  const stepLabel = { language: t("new.step.language"), project: t("new.step.project"), type: t("new.step.type"), source: t("new.step.source") };
+  const stepOrder: ("language" | "project" | "type" | "mode" | "source")[] = glMode ? ["language", "project", "type", "mode", "source"] : ["language", "project", "mode", "source"];
+  const stepLabel = { language: t("new.step.language"), project: t("new.step.project"), type: t("new.step.type"), mode: t("new.step.mode"), source: t("new.step.source") };
+  const modeOptions: { id: TranslationMode; label: string; desc: string }[] = [
+    { id: "classic", label: t("new.mode.classic"), desc: t("new.mode.classic_desc") },
+    { id: "team", label: t("new.mode.team"), desc: t("new.mode.team_desc") },
+    { id: "mast", label: t("new.mode.mast"), desc: t("new.mode.mast_desc") },
+  ];
   const cur = stepOrder.indexOf(step);
   const sourceLabel = (r: ResourceRow) => `${r.language_name} (${r.language_slug}) - ${r.name}`;
   const downloaded = (sourceRows ?? []).filter((r) => r.downloaded);
@@ -436,12 +454,31 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
               const has = exists(o.type, o.resource);
               const needsText = (o.type === "tn" || o.type === "tq") && !existing.some((p) => p.language_id === language.slug && p.project_id === book.slug && p.type_id === "text");
               return (
-                <div key={o.type + o.resource} className={"list-item" + (has || needsText ? " disabled" : "")} onClick={() => !has && !needsText && goSource(book, o.type, o.resource)}>
+                <div key={o.type + o.resource} className={"list-item" + (has || needsText ? " disabled" : "")} onClick={() => !has && !needsText && (o.type === "text" ? goMode(o.type, o.resource) : goSource(book, o.type, o.resource))}>
                   <span className="grow">{o.label}</span>
                   {has && <span className="badge">{t("new.exists")}</span>}
                 </div>
               );
             })}
+          </div>
+        </div>
+      )}
+      {step === "mode" && language && book && pendingType && (
+        <div className="col">
+          <div className="row wrap">
+            <span className="badge">{language.name}</span>
+            <span className="badge">{book.name}</span>
+            <span className="badge">{typeLabel(pendingType)}</span>
+            <Button size="sm" variant="ghost" onClick={() => setStep(glMode && pendingType.resource !== "obs" ? "type" : "project")}>{t("details.change")}</Button>
+          </div>
+          <h3 style={{ margin: ".2rem 0 0" }}>{t("new.choose_mode")}</h3>
+          <div className="mode-options">
+            {modeOptions.map((o) => (
+              <button key={o.id} type="button" className={"mode-option" + (mode === o.id ? " selected" : "")} onClick={() => pickMode(o.id)}>
+                <strong>{o.label}</strong>
+                <span className="small muted">{o.desc}</span>
+              </button>
+            ))}
           </div>
         </div>
       )}
@@ -451,7 +488,8 @@ export function NewProjectDialog({ onClose, onCreated }: { onClose: () => void; 
             <span className="badge">{language.name}</span>
             <span className="badge">{book.name}</span>
             <span className="badge">{typeLabel(pending)}</span>
-            <Button size="sm" variant="ghost" onClick={() => setStep(glMode && pending.resource !== "obs" ? "type" : "project")}>{t("details.change")}</Button>
+            {pending.type === "text" && <span className="badge">{modeOptions.find((o) => o.id === mode)?.label}</span>}
+            <Button size="sm" variant="ghost" onClick={() => setStep(pending.type === "text" ? "mode" : glMode ? "type" : "project")}>{t("details.change")}</Button>
           </div>
           <h3 style={{ margin: ".2rem 0 0" }}>{t("new.choose_source")}</h3>
           <p className="muted small" style={{ margin: 0 }}>{t("new.source_hint")}</p>

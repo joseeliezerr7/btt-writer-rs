@@ -32,6 +32,7 @@ pub mod hold;
 pub mod predict;
 pub mod library;
 pub mod manifest;
+pub mod mast;
 pub mod print;
 pub mod project;
 pub mod rc;

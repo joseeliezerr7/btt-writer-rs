@@ -149,6 +149,11 @@ pub struct Manifest {
     pub finished_chunks: Vec<String>,
     #[serde(default)]
     pub parent_draft: ParentDraft,
+    /// Modo de trabajo elegido al crear el proyecto: `classic` (vacío), `team`
+    /// (equipo en tiempo real) o `mast` (los 8 pasos). Campo propio de BTT Writer 3;
+    /// tS y WACS lo ignoran.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub translation_mode: String,
     /// Campos desconocidos que se conservan tal cual.
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
@@ -182,6 +187,7 @@ impl Manifest {
             translators: vec![],
             finished_chunks: vec![],
             parent_draft: ParentDraft::default(),
+            translation_mode: String::new(),
             extra: BTreeMap::new(),
         }
     }

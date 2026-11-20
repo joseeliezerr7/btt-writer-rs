@@ -105,7 +105,21 @@ export interface Manifest {
   source_translations: SourceTranslation[];
   translators: string[];
   finished_chunks: string[];
+  /** `classic` (o ausente), `team` o `mast`. */
+  translation_mode?: string;
 }
+
+export type TranslationMode = "classic" | "team" | "mast";
+
+// Progreso de los 8 pasos MAST (ver btt_core::mast).
+export type MastStep = "consume" | "verbalize" | "chunk" | "blind_draft" | "self_edit" | "peer_edit" | "key_words" | "verse_check" | "markers";
+export const MAST_STEPS: MastStep[] = ["consume", "verbalize", "chunk", "blind_draft", "self_edit", "peer_edit", "key_words", "verse_check", "markers"];
+export const mastNeedsChecker = (s: MastStep) => s === "peer_edit" || s === "key_words" || s === "verse_check";
+export interface MastConfirmation { by: string; at: number }
+export interface MastStepState { translator?: MastConfirmation; checker?: MastConfirmation }
+export interface MastNote { by: string; at: number; step: string; text: string }
+export interface MastChapter { steps: Record<string, MastStepState>; checker?: string; notes?: Record<string, MastNote[]> }
+export interface MastFile { chapters: Record<string, MastChapter> }
 
 export interface ResourceRow {
   language_slug: string;
@@ -457,7 +471,13 @@ export const api = {
 
   listProjects: () => call<ProjectItem[]>("list_projects"),
   getProject: (id: string) => call<ProjectDetail>("get_project", { id }),
-  createProject: (spec: { language: string; project: string; type: string; resource: string }) => call<string>("create_project", { spec }),
+  createProject: (spec: { language: string; project: string; type: string; resource: string; mode?: TranslationMode }) => call<string>("create_project", { spec }),
+  setProjectMode: (id: string, mode: TranslationMode) => call<void>("set_project_mode", { id, mode }),
+  mastStatus: (id: string) => call<MastFile>("mast_status", { id }),
+  mastConfirm: (id: string, chapter: string, step: MastStep, role: "translator" | "checker", on: boolean) => call<MastFile>("mast_confirm", { id, chapter, step, role, on }),
+  mastSetChecker: (id: string, chapter: string, checker: string) => call<MastFile>("mast_set_checker", { id, chapter, checker }),
+  mastAddNote: (id: string, chapter: string, chunk: string, step: MastStep, text: string) => call<MastFile>("mast_add_note", { id, chapter, chunk, step, text }),
+  mastRemoveNote: (id: string, chapter: string, chunk: string, at: number) => call<MastFile>("mast_remove_note", { id, chapter, chunk, at }),
   deleteProject: (id: string) => call<string>("delete_project", { id }),
   changeResource: (id: string, resource: string) => call<string>("change_resource", { id, resource }),
   setTranslators: (id: string, translators: string[]) => call<string[]>("set_translators", { id, translators }),

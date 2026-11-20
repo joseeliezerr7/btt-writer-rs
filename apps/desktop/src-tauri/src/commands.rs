@@ -406,7 +406,12 @@ pub struct NewProject {
     #[serde(rename = "type")]
     type_id: String,
     resource: String,
+    /// `classic`, `team` o `mast` (vacío = clásico).
+    #[serde(default)]
+    mode: String,
 }
+
+const TRANSLATION_MODES: [&str; 3] = ["classic", "team", "mast"];
 
 #[tauri::command]
 async fn create_project(app: tauri::AppHandle, spec: NewProject) -> R<String> {
@@ -437,6 +442,12 @@ async fn create_project(app: tauri::AppHandle, spec: NewProject) -> R<String> {
     );
     // Nombre del proyecto se guarda vacío como hace la app original (se calcula al mostrar).
     manifest.project.name = String::new();
+    if !spec.mode.is_empty() && spec.mode != "classic" {
+        if !TRANSLATION_MODES.contains(&spec.mode.as_str()) {
+            return Err(format!("modo de traducción desconocido: {}", spec.mode));
+        }
+        manifest.translation_mode = spec.mode.clone();
+    }
     let translator = st.profile.lock().unwrap_or_else(|e| e.into_inner()).display_name();
     manifest.add_translator(&translator);
     // Fuente por defecto: la primera descargada para este libro (en/ulb preferida).
@@ -787,6 +798,67 @@ async fn chunk_history(app: tauri::AppHandle, id: String, chapter: String, chunk
     let p = open_project(st, &id)?;
     gitrepo::commit_all(&p.root, &st.author(), gitrepo::AUTOSAVE_MESSAGE).map_err(err)?;
     history_entries(&p, &chapter, &chunk)
+}).await
+}
+
+/// Cambia el modo de trabajo de un proyecto ya creado (clásico, equipo o MAST).
+#[tauri::command]
+async fn set_project_mode(app: tauri::AppHandle, id: String, mode: String) -> R<()> {
+    blocking(app, move |st| {
+    if !mode.is_empty() && !TRANSLATION_MODES.contains(&mode.as_str()) {
+        return Err(format!("modo de traducción desconocido: {mode}"));
+    }
+    let mut p = open_project(st, &id)?;
+    p.manifest.translation_mode = if mode == "classic" { String::new() } else { mode };
+    p.save_manifest().map_err(err)
+}).await
+}
+
+/// Progreso de los 8 pasos MAST del proyecto (por capítulo).
+#[tauri::command]
+async fn mast_status(app: tauri::AppHandle, id: String) -> R<btt_core::mast::MastFile> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
+    Ok(btt_core::mast::load(&p.root))
+}).await
+}
+
+/// Confirma o retira la confirmación de un paso MAST como traductor o como revisor.
+#[tauri::command]
+async fn mast_confirm(app: tauri::AppHandle, id: String, chapter: String, step: String, role: btt_core::mast::Role, on: bool) -> R<btt_core::mast::MastFile> {
+    blocking(app, move |st| {
+    if !btt_core::mast::is_step(&step) {
+        return Err(format!("paso desconocido: {step}"));
+    }
+    let p = open_project(st, &id)?;
+    let me = st.author().name;
+    btt_core::mast::confirm(&p.root, &chapter, &step, role, &me, on, now()).map_err(err)
+}).await
+}
+
+#[tauri::command]
+async fn mast_set_checker(app: tauri::AppHandle, id: String, chapter: String, checker: String) -> R<btt_core::mast::MastFile> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
+    btt_core::mast::set_checker(&p.root, &chapter, &checker).map_err(err)
+}).await
+}
+
+#[tauri::command]
+async fn mast_add_note(app: tauri::AppHandle, id: String, chapter: String, chunk: String, step: String, text: String) -> R<btt_core::mast::MastFile> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
+    let me = st.author().name;
+    btt_core::mast::add_note(&p.root, &chapter, &chunk, &step, &me, &text, now()).map_err(err)
+}).await
+}
+
+#[tauri::command]
+async fn mast_remove_note(app: tauri::AppHandle, id: String, chapter: String, chunk: String, at: u64) -> R<btt_core::mast::MastFile> {
+    blocking(app, move |st| {
+    let p = open_project(st, &id)?;
+    let me = st.author().name;
+    btt_core::mast::remove_note(&p.root, &chapter, &chunk, &me, at).map_err(err)
 }).await
 }
 
@@ -1746,6 +1818,12 @@ pub fn handler() -> impl Fn(tauri::ipc::Invoke) -> bool {
         chunk_history,
         chapter_authors,
         predict_words,
+        set_project_mode,
+        mast_status,
+        mast_confirm,
+        mast_set_checker,
+        mast_add_note,
+        mast_remove_note,
         chunk_at_commit,
         restore_chunk,
         search_project,

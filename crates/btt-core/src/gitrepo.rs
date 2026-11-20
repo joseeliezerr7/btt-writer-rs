@@ -586,6 +586,11 @@ fn fetch_and_merge(repo: &Repository, remote_name: &str, creds: Option<&Credenti
                 let ours = blob_text(repo, &local, &p).unwrap_or_default();
                 let theirs = blob_text(repo, &remote_commit, &p).unwrap_or_default();
                 std::fs::write(&full, crate::collab::merge_json(&ours, &theirs))?;
+            } else if p == crate::mast::MAST_FILE {
+                // Progreso de los 8 pasos: las confirmaciones y notas de ambas copias se unen.
+                let ours = blob_text(repo, &local, &p).unwrap_or_default();
+                let theirs = blob_text(repo, &remote_commit, &p).unwrap_or_default();
+                std::fs::write(&full, crate::mast::merge_json(&ours, &theirs))?;
             } else {
                 conflicted.push(p.clone());
             }
